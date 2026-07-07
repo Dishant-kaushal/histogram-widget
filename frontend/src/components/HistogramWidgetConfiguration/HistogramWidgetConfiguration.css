@@ -66,6 +66,24 @@
   outline: 2px solid var(--border-brand-default, #4d79ff);
   outline-offset: 1px;
 }
+/* 20px variant — matches the SDK accordion chevron so the header + aligns with it. */
+.hcfg-icon-action--sm {
+  width: 20px;
+  height: 20px;
+}
+
+/* Counter pill shown next to the "Data Sources" title (trailingIcon slot). */
+.hcfg-ds-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 var(--spacing-02);
+  border-radius: 9px;
+  background: var(--background-brand-subtle, #e8effe);
+  color: var(--text-brand-default, #2f6fed);
+}
 .hcfg-ds-dot {
   width: 10px;
   height: 10px;

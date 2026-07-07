@@ -180,17 +180,20 @@ function IconAction({
   icon,
   label,
   onClick,
+  small,
 }: {
   icon: ReactNode;
   label: string;
   onClick: (e: React.MouseEvent | React.KeyboardEvent) => void;
+  // `small` (20px) matches the SDK chevron so header actions align with it.
+  small?: boolean;
 }) {
   return (
     <span
       role="button"
       tabIndex={0}
       aria-label={label}
-      className="hcfg-icon-action"
+      className={`hcfg-icon-action${small ? ' hcfg-icon-action--sm' : ''}`}
       onClick={(e) => { e.stopPropagation(); onClick(e); }}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); onClick(e); }
@@ -333,6 +336,7 @@ function DataSourceEditor({
   const [name, setName] = useState(initial?.name ?? '');
   const [unsPath, setUnsPath] = useState(initial?.unsPath ?? '');
   const [dataPrecision, setDataPrecision] = useState(initial ? String(initial.dataPrecision) : '2');
+  const [unit, setUnit] = useState(initial?.unit ?? '');
   const [enableLineChart, setEnableLineChart] = useState(initial?.enableLineChart ?? false);
   const [automaticBinWidth, setAutomaticBinWidth] = useState(initial?.automaticBinWidth ?? true);
   // New sources start with no bins — the user adds them (manually or via the
@@ -348,11 +352,12 @@ function DataSourceEditor({
       name: name.trim(),
       unsPath,
       dataPrecision: Math.max(0, Math.floor(num(dataPrecision, 2))),
+      unit: unit.trim() || undefined,
       enableLineChart,
       automaticBinWidth,
       bins,
     });
-  }, [isValid, initial, existingCount, name, unsPath, dataPrecision, enableLineChart, automaticBinWidth, bins, onSubmit]);
+  }, [isValid, initial, existingCount, name, unsPath, dataPrecision, unit, enableLineChart, automaticBinWidth, bins, onSubmit]);
 
   useEditorBinding(isValid, submit, onReady);
 
@@ -375,14 +380,22 @@ function DataSourceEditor({
         onOpen={loadWorkspaces}
         onChange={(value: string) => setUnsPath(resolveUNSValue(value))}
       />
-      <TextInput
-        label="Data Precision"
-        type="number"
-        placeholder="Enter value"
-        value={dataPrecision}
-        helpText={`Show data accurate to ${num(dataPrecision, 2)} decimals`}
-        onChange={({ value }: { value: string }) => setDataPrecision(value)}
-      />
+      <div className="hcfg-row">
+        <TextInput
+          label="Data Precision"
+          type="number"
+          placeholder="Enter value"
+          value={dataPrecision}
+          helpText={`Accurate to ${num(dataPrecision, 2)} decimals`}
+          onChange={({ value }: { value: string }) => setDataPrecision(value)}
+        />
+        <TextInput
+          label="Unit"
+          placeholder="e.g. °C, kWh"
+          value={unit}
+          onChange={({ value }: { value: string }) => setUnit(value)}
+        />
+      </div>
       <div className="hcfg-switch-row">
         <span className="BodySmallRegular">Enable Data Source Line Chart</span>
         <Switch isChecked={enableLineChart} onChange={({ isChecked }: { isChecked: boolean }) => setEnableLineChart(isChecked)} accessibilityLabel="Enable line chart" />
@@ -774,11 +787,16 @@ export function HistogramWidgetConfiguration({
 
       <ProductAccordionItem
         title="Data Sources"
-        subtitle={`${ui.dataSources.length} source${ui.dataSources.length === 1 ? '' : 's'}`}
+        trailingIcon={
+          ui.dataSources.length > 0 ? (
+            <span className="hcfg-ds-count BodyXSmallMedium">{ui.dataSources.length}</span>
+          ) : undefined
+        }
         isExpanded={dsExpanded}
         onToggle={() => setDsExpanded((v) => !v)}
         headerAction={
           <IconAction
+            small
             icon={<Plus size={16} />}
             label="Add data source"
             onClick={() => {

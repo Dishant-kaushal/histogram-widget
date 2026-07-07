@@ -357,7 +357,8 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({ config, data, 
           const src = custom ? sources[custom.sourceIdx] : undefined;
           const bin = custom && src ? src.bins?.[custom.binIdx] : undefined;
           const i = (custom?.binIdx ?? this.index) + 1;
-          if (cfg.showBinRanges && bin) return `<b>Bin ${i} (${bin.start}-${bin.end})</b> : ${this.y}`;
+          const unit = src?.unit ? ` ${src.unit}` : '';
+          if (cfg.showBinRanges && bin) return `<b>Bin ${i} (${bin.start}-${bin.end}${unit})</b> : ${this.y}`;
           if (bin && hasBinName(bin.binName)) return `<b>${bin.binName}</b> : ${this.y}`;
           return `<b>Bin ${i}</b> : ${this.y}`;
         },

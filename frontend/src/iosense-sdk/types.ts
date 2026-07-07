@@ -151,6 +151,8 @@ export interface HistogramDataSource {
   unsPath: string;
   /** Decimal precision for displayed frequencies / drill-down (v1 "Data Precision"). */
   dataPrecision: number;
+  /** Measurement unit label (v1 series unit) — shown alongside values in tooltips. */
+  unit?: string;
   /** v1 "Enable Data Source Line Chart" — allow per-bin hour-of-day drill-down for this source. */
   enableLineChart: boolean;
   /** v1 "Automatic Bin Width" — bins auto-generated from a [min,max] range vs manually added. */
