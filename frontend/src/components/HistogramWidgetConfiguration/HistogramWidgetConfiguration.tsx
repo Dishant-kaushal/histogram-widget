@@ -34,6 +34,7 @@ import type {
   HistogramStyling,
   HistogramUIConfig,
   HostTimeConfig,
+  StylingFontWeight,
   TimeTabUIConfig,
   GTPGlobalTimepicker,
 } from '../../iosense-sdk/types';
@@ -95,6 +96,24 @@ const WIDGET_SIZES: { value: 'Small' | 'Medium' | 'Large' | 'Custom'; label: str
   { value: 'Medium', label: 'Medium — 880 × 400', w: 880, h: 400 },
   { value: 'Large', label: 'Large — 1500 × 520', w: 1500, h: 520 },
   { value: 'Custom', label: 'Custom', w: undefined, h: undefined },
+];
+
+// Enumerated style choices (mirror the values the renderer maps).
+const FONT_WEIGHTS: { value: StylingFontWeight; label: string }[] = [
+  { value: 'Regular', label: 'Regular' },
+  { value: 'Medium', label: 'Medium' },
+  { value: 'Semi-Bold', label: 'Semi-Bold' },
+  { value: 'Bold', label: 'Bold' },
+];
+
+// Highcharts dashStyle values (title-cased to match the renderer's cast).
+const DASH_STYLES: { value: string; label: string }[] = [
+  { value: 'Solid', label: 'Solid' },
+  { value: 'Dash', label: 'Dash' },
+  { value: 'Dot', label: 'Dot' },
+  { value: 'ShortDash', label: 'Short Dash' },
+  { value: 'LongDash', label: 'Long Dash' },
+  { value: 'DashDot', label: 'Dash Dot' },
 ];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -316,9 +335,9 @@ function DataSourceEditor({
   const [dataPrecision, setDataPrecision] = useState(initial ? String(initial.dataPrecision) : '2');
   const [enableLineChart, setEnableLineChart] = useState(initial?.enableLineChart ?? false);
   const [automaticBinWidth, setAutomaticBinWidth] = useState(initial?.automaticBinWidth ?? true);
-  const [bins, setBins] = useState<Bin[]>(
-    initial?.bins ?? createGroups(0, 100, 10).map(([start, end]) => ({ start, end, binName: '-', color: DEFAULT_BIN_COLOR })),
-  );
+  // New sources start with no bins — the user adds them (manually or via the
+  // automatic range generator). Editing keeps the source's existing bins.
+  const [bins, setBins] = useState<Bin[]>(initial?.bins ?? []);
 
   const isValid = name.trim().length > 0 && unsPath.trim().length > 0 && bins.length > 0;
 
@@ -381,6 +400,40 @@ function DataSourceEditor({
 }
 
 // ─── Style tab (v1 Stage 3 "Chart Customization" + all styling) ─────────────
+
+/** Small enum dropdown built on the SDK SelectInput (self-manages open state). */
+function StyleSelect<T extends string>({
+  label,
+  value,
+  options,
+  onSelect,
+}: {
+  label: string;
+  value: T;
+  options: { value: T; label: string }[];
+  onSelect: (v: T) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const current = options.find((o) => o.value === value);
+  return (
+    <SelectInput label={label} value={current?.label ?? String(value)} isOpen={open} onClick={() => setOpen((o) => !o)}>
+      <DropdownMenu>
+        {options.map((o) => (
+          <ActionListItem
+            key={o.value}
+            title={o.label}
+            selectionType="Single"
+            isSelected={value === o.value}
+            onClick={() => {
+              onSelect(o.value);
+              setOpen(false);
+            }}
+          />
+        ))}
+      </DropdownMenu>
+    </SelectInput>
+  );
+}
 
 function StylingSection({
   value,
@@ -468,9 +521,67 @@ function StylingSection({
         <span className="LabelMediumRegular">Show Distribution Line</span>
         <Switch isChecked={ui.showDistributionLine} onChange={({ isChecked }: { isChecked: boolean }) => onPatchUi({ showDistributionLine: isChecked })} accessibilityLabel="Show distribution line" />
       </div>
+      {ui.showDistributionLine && (
+        <div className="hcfg-entry">
+          <ColorInput label="Distribution Line Color" placeholder="Select color" value={value.distribution.color} onChange={(v: string) => update('distribution', { color: v })} />
+          <div className="hcfg-row">
+            <TextInput label="Line Width" type="number" value={String(value.distribution.width)} onChange={({ value: v }: { value: string }) => update('distribution', { width: num(v, 3) })} />
+            <StyleSelect label="Dash Style" value={value.distribution.dashStyle} options={DASH_STYLES} onSelect={(v) => update('distribution', { dashStyle: v })} />
+          </div>
+        </div>
+      )}
 
       <Divider />
 
+      {/* Chart title styling (v1 Chart Customization) */}
+      <p className="hcfg-style-block__title LabelMediumSemibold">Chart Title</p>
+      <div className="hcfg-switch-row">
+        <span className="LabelMediumRegular">Hide Chart Title</span>
+        <Switch isChecked={value.hideElements.chartTitle} onChange={({ isChecked }: { isChecked: boolean }) => update('hideElements', { chartTitle: isChecked })} accessibilityLabel="Hide chart title" />
+      </div>
+      {!value.hideElements.chartTitle && (
+        <div className="hcfg-entry">
+          <div className="hcfg-row">
+            <TextInput label="Font Size (px)" type="number" value={String(value.chartTitle.fontSize)} onChange={({ value: v }: { value: string }) => update('chartTitle', { fontSize: num(v, 18) })} />
+            <StyleSelect label="Font Weight" value={value.chartTitle.fontWeight} options={FONT_WEIGHTS} onSelect={(v: StylingFontWeight) => update('chartTitle', { fontWeight: v })} />
+          </div>
+          <ColorInput label="Font Color" placeholder="Select color" value={value.chartTitle.fontColor} onChange={(v: string) => update('chartTitle', { fontColor: v })} />
+        </div>
+      )}
+
+      <Divider />
+
+      {/* Axis & grid styling */}
+      <p className="hcfg-style-block__title LabelMediumSemibold">Axes &amp; Grid</p>
+      <div className="hcfg-entry">
+        <div className="hcfg-row">
+          <ColorInput label="X Label Color" placeholder="Select color" value={value.xAxisLabel.textColor} onChange={(v: string) => update('xAxisLabel', { textColor: v })} />
+          <ColorInput label="X Axis Line" placeholder="Select color" value={value.xAxisLabel.lineColor} onChange={(v: string) => update('xAxisLabel', { lineColor: v })} />
+        </div>
+        <div className="hcfg-row">
+          <ColorInput label="Y Label Color" placeholder="Select color" value={value.yAxisLabel.textColor} onChange={(v: string) => update('yAxisLabel', { textColor: v })} />
+          <ColorInput label="Grid Line Color" placeholder="Select color" value={value.misc.gridLineColor} onChange={(v: string) => update('misc', { gridLineColor: v })} />
+        </div>
+        <ColorInput label="Legend Text Color" placeholder="Select color" value={value.misc.legendTextColor} onChange={(v: string) => update('misc', { legendTextColor: v })} />
+      </div>
+
+      <Divider />
+
+      {/* Data labels (frequency count drawn inside each bar) */}
+      <p className="hcfg-style-block__title LabelMediumSemibold">Data Labels</p>
+      <div className="hcfg-row">
+        <ColorInput label="Label Color" placeholder="Select color" value={value.dataLabels.color} onChange={(v: string) => update('dataLabels', { color: v })} />
+        <TextInput label="Font Size (px)" type="number" value={String(value.dataLabels.fontSize)} onChange={({ value: v }: { value: string }) => update('dataLabels', { fontSize: num(v, 11) })} />
+      </div>
+
+      <Divider />
+
+      {/* Card + toolbar visibility */}
+      <p className="hcfg-style-block__title LabelMediumSemibold">Card &amp; Toolbar</p>
+      <div className="hcfg-switch-row">
+        <span className="LabelMediumRegular">Hide Export Icon</span>
+        <Switch isChecked={value.hideElements.exportIcon} onChange={({ isChecked }: { isChecked: boolean }) => update('hideElements', { exportIcon: isChecked })} accessibilityLabel="Hide export icon" />
+      </div>
       <div className="hcfg-switch-row">
         <span className="LabelMediumRegular">Wrap Into Card</span>
         <Switch
@@ -479,6 +590,18 @@ function StylingSection({
           accessibilityLabel="Wrap into card"
         />
       </div>
+      {value.card.wrapInCard && (
+        <div className="hcfg-entry">
+          <div className="hcfg-row">
+            <ColorInput label="Background" placeholder="Select color" value={value.card.backgroundColor} onChange={(v: string) => update('card', { backgroundColor: v })} />
+            <ColorInput label="Border Color" placeholder="Select color" value={value.card.borderColor} onChange={(v: string) => update('card', { borderColor: v })} />
+          </div>
+          <div className="hcfg-row">
+            <TextInput label="Border Width (px)" type="number" value={String(value.card.borderWidth)} onChange={({ value: v }: { value: string }) => update('card', { borderWidth: num(v, 1) })} />
+            <TextInput label="Border Radius (px)" type="number" value={String(value.card.borderRadius)} onChange={({ value: v }: { value: string }) => update('card', { borderRadius: num(v, 8) })} />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -683,9 +806,6 @@ export function HistogramWidgetConfiguration({
               }
             />
           ))}
-          <div className="hcfg-add-row">
-            <Button variant="Secondary" size="Small" leadingIcon={<Plus size={14} />} label="Add New Data Source" onClick={() => openSrcPanel({ mode: 'add' })} />
-          </div>
         </div>
       </ProductAccordionItem>
     </div>
