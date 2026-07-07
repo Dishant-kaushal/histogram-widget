@@ -141,6 +141,9 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({ config, data, 
 
   const hasAnyData = sourcePoints.some((pts) => pts.length > 0);
   const isLoading = boundSources.length > 0 && data.length === 0;
+  // A histogram needs bins to draw bars. Bins are configured per source (Data
+  // tab → Bins); a source added without bins would otherwise render a blank chart.
+  const hasAnyBins = sources.some((s) => (s.bins?.length ?? 0) > 0);
 
   const handleBarClick = (sourceIdx: number, binIdx: number) => {
     // v1 "Enable Data Source Line Chart" is per-source; fall back to the global flag.
@@ -528,7 +531,18 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({ config, data, 
           </div>
         )}
 
-        {boundSources.length > 0 && !isLoading && hasAnyData && (
+        {boundSources.length > 0 && !isLoading && hasAnyData && !hasAnyBins && (
+          <div className="histogram-widget__empty">
+            <EmptyState
+              size="Medium"
+              illustration={<NoDataOneIllustration />}
+              title="No bins configured"
+              description="Add bins for your data source (Data tab → Bins) to see the histogram."
+            />
+          </div>
+        )}
+
+        {boundSources.length > 0 && !isLoading && hasAnyData && hasAnyBins && (
           <HighchartsReact
             ref={chartRef}
             highcharts={Highcharts}
