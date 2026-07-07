@@ -1,0 +1,222 @@
+/* HistogramWidgetConfiguration — structural BEM only.
+   Design-sdk handles all component styling via its own CSS variables.
+   Never override .fds-* classes; never hardcode colors — use design tokens. */
+
+/* ── Data Source add/edit side modal (mirrors the Line Chart) ────────────── */
+
+/* The SDK Modal renders inline (no portal); position:fixed + high z-index so it
+   floats above the preview and any host canvas. Popovers (SelectInput,
+   ColorInput, UNSPathInput) portal to <body> and must beat the backdrop. */
+.hcfg-side-modal.fds-modal__backdrop,
+.fds-modal__backdrop {
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: 10000 !important;
+  background: transparent;
+}
+.hcfg-side-modal .fds-modal {
+  width: 320px;
+  max-height: calc(100vh - 32px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.hcfg-side-modal .fds-modal__body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  min-height: 0;
+}
+.fds-select-input__popover,
+.fds-color-input__popover,
+.fds-uns-path-input__popover,
+.fds-modal__backdrop .fds-dropdown-menu {
+  z-index: 10002 !important;
+}
+
+.hcfg-editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-04);
+}
+
+.hcfg-ds-actions {
+  display: flex;
+  gap: var(--spacing-02);
+  align-items: center;
+}
+
+/* Span-based icon action (used where a real <button> would nest inside another
+   button — invalid HTML). Styled to read like an icon button. */
+.hcfg-icon-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--global-border-radius-medium);
+  color: var(--text-default-secondary);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.hcfg-icon-action:hover {
+  background: var(--background-default-moderate);
+  color: var(--text-default-primary);
+}
+.hcfg-icon-action:focus-visible {
+  outline: 2px solid var(--border-brand-default, #4d79ff);
+  outline-offset: 1px;
+}
+.hcfg-ds-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--background-brand-default, #4d79ff);
+  display: inline-block;
+}
+
+.hcfg {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.hcfg-tabs {
+  flex-shrink: 0;
+}
+
+.hcfg-body {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.hcfg-tab-content {
+  padding-bottom: var(--spacing-05);
+}
+
+.hcfg-time-tab,
+.hcfg-style-tab {
+  padding: var(--spacing-04) 0;
+}
+
+.hcfg-style-tab {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-04);
+}
+
+.hcfg-accordion-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-04);
+}
+
+.hcfg-entry {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-04);
+}
+
+.hcfg-row {
+  display: flex;
+  gap: var(--spacing-03);
+}
+.hcfg-row > * {
+  flex: 1;
+  min-width: 0;
+}
+
+.hcfg-field-label {
+  color: var(--text-default-secondary);
+}
+
+.hcfg-switch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-03);
+  color: var(--text-default-primary);
+}
+
+/* Data source block */
+.hcfg-source-block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-04);
+  padding: var(--spacing-04);
+  background: var(--background-default-moderate);
+  border: var(--fds-border-subtle);
+  border-radius: var(--global-border-radius-large);
+}
+.hcfg-source-block__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-03);
+}
+.hcfg-source-block__title {
+  color: var(--text-default-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Bin generator */
+.hcfg-bin-generator {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr auto;
+  gap: var(--spacing-03);
+  align-items: flex-end;
+}
+
+/* Bin / plotline item card */
+.hcfg-bin-item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-03);
+  padding: var(--spacing-03);
+  background: var(--background-default-intense);
+  border: var(--fds-border-subtle);
+  border-radius: var(--global-border-radius-medium);
+}
+.hcfg-bin-item__head {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-03);
+}
+.hcfg-bin-item__num {
+  color: var(--text-default-tertiary);
+  flex: 1;
+  min-width: 0;
+}
+.hcfg-bin-item__swatch {
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  border: var(--fds-border-subtle);
+  flex-shrink: 0;
+}
+
+.hcfg-add-row {
+  display: flex;
+  justify-content: flex-start;
+}
+
+/* Style tab blocks */
+.hcfg-style-block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-04);
+}
+.hcfg-style-block__title {
+  color: var(--text-default-primary);
+  margin: 0;
+}
+.hcfg-checkbox-col {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-03);
+}
+

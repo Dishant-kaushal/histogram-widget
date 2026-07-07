@@ -1,65 +1,143 @@
-import Image from "next/image";
+'use client';
+
+// Dev preview harness — simulates the Lens side-by-side layout.
+// Configurator onChange → envelope → mini-engine resolve() → widget re-renders.
+//
+// Auth: open /?token=<SSO_TOKEN> once (exchanged + stored in localStorage),
+// or paste a JWT into the token field.
+
+import { useEffect, useState } from 'react';
+import HistogramWidgetConfiguration from '../components/HistogramWidgetConfiguration';
+import { HistogramWidget } from '../components/HistogramWidget/HistogramWidget';
+import { validateSSOToken } from '../iosense-sdk/api';
+import { resolve } from '../iosense-sdk/mini-engine';
+import type { DataEntry, HistogramEnvelope } from '../iosense-sdk/types';
 
 export default function Home() {
+  const [envelope, setEnvelope] = useState<HistogramEnvelope | undefined>(undefined);
+  const [data, setData] = useState<DataEntry[]>([]);
+  const [token, setToken] = useState('');
+  const [authError, setAuthError] = useState('');
+  // Render the configurator/widget client-only. The design-sdk's
+  // ProductAccordionItem and TimeTabConfiguration render a <button> inside a
+  // <button> (invalid HTML) — harmless in the host's client-only mount, but it
+  // trips Next.js hydration when SSR'd. Gating on `mounted` skips SSR of that
+  // subtree so server + first client render agree.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+
+  // Pick up token from localStorage / exchange SSO ?token= on mount
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const ssoToken = params.get('token');
+
+    if (ssoToken) {
+      params.delete('token');
+      const newUrl = `${window.location.pathname}${params.toString() ? `?${params}` : ''}`;
+      window.history.replaceState({}, '', newUrl);
+
+      validateSSOToken(ssoToken)
+        .then((jwt) => setToken(jwt))
+        .catch((err) => setAuthError(err instanceof Error ? err.message : 'Auth failed'));
+    } else {
+      setToken(localStorage.getItem('bearer_token') ?? '');
+    }
+  }, []);
+
+  // Re-resolve whenever the envelope or token changes — real resolveAndCompute call
+  useEffect(() => {
+    if (!envelope || !token) return;
+    console.log('[Harness] resolving envelope:', envelope.dynamicBindingPathList);
+    resolve(envelope, { authentication: token }).then(({ data: resolved }) => {
+      console.log('[Harness] resolved data:', resolved);
+      setData(resolved);
+    });
+  }, [envelope, token]);
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+    <div style={{ display: 'flex', height: '100vh', fontFamily: 'system-ui, sans-serif', background: '#f8fafc' }}>
+      {/* Left — Configuration panel (~38%) */}
+      <div
+        style={{
+          width: '38%',
+          minWidth: 340,
+          borderRight: '1px solid #e5e7eb',
+          background: '#fff',
+          overflow: 'hidden',
+          display: 'flex',
+          flexDirection: 'column',
+        }}
+      >
+        <div style={{ padding: '12px 16px', borderBottom: '1px solid #e5e7eb', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span style={{ fontSize: 13, fontWeight: 600, color: '#374151' }}>Configuration</span>
+          <span style={{ fontSize: 11, color: '#9ca3af' }}>HistogramWidget</span>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
+
+        {/* Token input (dev only) */}
+        <div style={{ padding: '8px 16px', borderBottom: '1px solid #f3f4f6', display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontSize: 11, color: '#6b7280', flexShrink: 0 }}>Bearer token</span>
+          <input
+            type="password"
+            placeholder="Paste JWT, or open /?token=<SSO_TOKEN>"
+            value={token}
+            onChange={(e) => {
+              setToken(e.target.value);
+              localStorage.setItem('bearer_token', e.target.value);
+            }}
+            style={{
+              flex: 1,
+              padding: '4px 8px',
+              fontSize: 11,
+              border: '1px solid #d1d5db',
+              borderRadius: 4,
+              background: '#f9fafb',
+              outline: 'none',
+            }}
+          />
+        </div>
+        {authError && (
+          <div style={{ padding: '6px 16px', fontSize: 11, color: '#dc2626', borderBottom: '1px solid #fee2e2', background: '#fef2f2' }}>
+            Auth error: {authError}
+          </div>
+        )}
+
+        <div style={{ flex: 1, overflow: 'auto' }}>
+          {mounted ? (
+            <HistogramWidgetConfiguration
+              config={envelope}
+              authentication={token}
+              onChange={setEnvelope}
             />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+          ) : (
+            <div style={{ padding: 16, color: '#9ca3af', fontSize: 13 }}>Loading configuration…</div>
+          )}
         </div>
-      </main>
+      </div>
+
+      {/* Right — Widget preview (~62%) */}
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        <div style={{ padding: '12px 16px', borderBottom: '1px solid #e5e7eb', background: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span style={{ fontSize: 13, fontWeight: 600, color: '#374151' }}>Widget Preview</span>
+          <span style={{ fontSize: 11, color: '#9ca3af' }}>
+            {envelope
+              ? `${envelope.uiConfig.dataSources.length} source(s) · ${envelope.uiConfig.aggregationMode} · ${envelope.dynamicBindingPathList.length} binding(s)`
+              : 'not configured'}
+          </span>
+        </div>
+        <div style={{ flex: 1, overflow: 'auto', padding: 16 }}>
+          {envelope ? (
+            <HistogramWidget
+              config={envelope.uiConfig}
+              data={data}
+              onEvent={(e) => console.log('[Widget Event]', e)}
+            />
+          ) : (
+            <div style={{ padding: 32, color: '#9ca3af', fontSize: 13 }}>
+              Configure the widget on the left to preview it.
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

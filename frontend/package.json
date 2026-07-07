@@ -3,24 +3,40 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev -H 0.0.0.0 -p 3001",
     "build": "next build",
-    "start": "next start",
+    "build:bundle": "webpack --mode production",
+    "start": "next start -H 0.0.0.0 -p 3001",
     "lint": "eslint"
   },
   "dependencies": {
+    "@faclon-labs/design-sdk": "^0.7.3",
+    "highcharts": "^12.0.0",
+    "highcharts-react-official": "^3.2.1",
     "next": "16.2.10",
     "react": "19.2.4",
-    "react-dom": "19.2.4"
+    "react-dom": "19.2.4",
+    "react-feather": "^2.0.10",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
+    "@babel/core": "^7.29.7",
+    "@babel/preset-env": "^7.29.7",
+    "@babel/preset-react": "^7.29.7",
+    "@babel/preset-typescript": "^7.29.7",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "babel-loader": "^10.1.1",
+    "css-loader": "^7.1.4",
     "eslint": "^9",
     "eslint-config-next": "16.2.10",
+    "mini-css-extract-plugin": "^2.10.2",
+    "style-loader": "^4.0.0",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "webpack": "^5.108.4",
+    "webpack-cli": "^7.2.1"
   }
 }
