@@ -37,6 +37,9 @@ import './HistogramWidget.css';
 interface HistogramWidgetProps {
   config: HistogramUIConfig;
   data: DataEntry[];
+  /** Explicit resolve-in-flight flag from the data layer. Preferred over
+   *  inferring from empty data (which never clears when a resolve returns []). */
+  loading?: boolean;
   onEvent?: (event: WidgetEvent) => void;
 }
 
@@ -91,7 +94,7 @@ interface DrillState {
   binIdx: number;
 }
 
-export const HistogramWidget: React.FC<HistogramWidgetProps> = ({ config, data, onEvent }) => {
+export const HistogramWidget: React.FC<HistogramWidgetProps> = ({ config, data, loading, onEvent }) => {
   const cfg: HistogramUIConfig = {
     ...DEFAULT_CONFIG,
     ...config,
@@ -140,7 +143,9 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({ config, data, 
   }, [sourcePoints, config]);
 
   const hasAnyData = sourcePoints.some((pts) => pts.length > 0);
-  const isLoading = boundSources.length > 0 && data.length === 0;
+  // Prefer the explicit flag; only fall back to the (imperfect) empty-data
+  // heuristic when the data layer doesn't provide one.
+  const isLoading = loading !== undefined ? loading : boundSources.length > 0 && data.length === 0;
   // A histogram needs bins to draw bars. Bins are configured per source (Data
   // tab → Bins); a source added without bins would otherwise render a blank chart.
   const hasAnyBins = sources.some((s) => (s.bins?.length ?? 0) > 0);

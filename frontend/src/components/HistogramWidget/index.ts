@@ -22,15 +22,21 @@ interface WidgetProps {
 
 function HistogramWidgetDataLayer({ config: envelope, authentication }: WidgetProps) {
   const [data, setData] = useState<DataEntry[]>([]);
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     if (!envelope?.dynamicBindingPathList?.length) {
       setData([]);
+      setLoading(false);
       return;
     }
+    setLoading(true);
     resolve(envelope, { authentication: authentication ?? '' }).then(({ data: resolved }) => {
-      if (!cancelled) setData(resolved);
+      if (!cancelled) {
+        setData(resolved);
+        setLoading(false); // clear even when `resolved` is [] → widget shows "No Data", not a stuck spinner
+      }
     });
     return () => {
       cancelled = true;
@@ -40,6 +46,7 @@ function HistogramWidgetDataLayer({ config: envelope, authentication }: WidgetPr
   return React.createElement(HistogramWidget, {
     config: envelope?.uiConfig ?? ({} as HistogramEnvelope['uiConfig']),
     data,
+    loading,
     onEvent: (e: WidgetEvent) => console.log('[HistogramWidget Event]', e),
   });
 }

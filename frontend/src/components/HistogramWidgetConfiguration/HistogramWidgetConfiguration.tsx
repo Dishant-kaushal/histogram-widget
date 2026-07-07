@@ -24,7 +24,6 @@ import {
   ModalFooter,
 } from '@faclon-labs/design-sdk';
 import { useUNSTree, type UNSTree } from '../../iosense-sdk/useUNSTree';
-import { createGroups } from '../HistogramWidget/histogram-utils';
 import type {
   Bin,
   BindingEntry,
@@ -205,58 +204,62 @@ function IconAction({
 }
 
 
-// ─── Bin generator (bulk create from a range) ────────────────────────────────
-
-function BinGenerator({ onGenerate }: { onGenerate: (bins: Bin[]) => void }) {
-  const [min, setMin] = useState('0');
-  const [max, setMax] = useState('100');
-  const [count, setCount] = useState('10');
-  return (
-    <div className="hcfg-bin-generator">
-      <TextInput label="Min" value={min} onChange={({ value }: { value: string }) => setMin(value)} />
-      <TextInput label="Max" value={max} onChange={({ value }: { value: string }) => setMax(value)} />
-      <TextInput label="Bins" value={count} onChange={({ value }: { value: string }) => setCount(value)} />
-      <Button
-        variant="Secondary"
-        size="Small"
-        label="Generate"
-        onClick={() => {
-          const groups = createGroups(num(min), num(max), Math.floor(num(count)));
-          if (groups.length === 0) return;
-          onGenerate(groups.map(([start, end]) => ({ start, end, binName: '-', color: DEFAULT_BIN_COLOR })));
-        }}
-      />
-    </div>
-  );
-}
-
 // ─── Single-bin form (opens in the Add/Edit Bin popup, like a data source) ───
 
 function BinForm({
+  sources,
+  fixedSourceId,
   initial,
   onSubmit,
   onReady,
 }: {
+  sources: HistogramDataSource[];
+  /** Set in edit mode — the bin's source is fixed (no picker). */
+  fixedSourceId: string | null;
   initial: Bin | null;
-  onSubmit: (bin: Bin) => void;
+  onSubmit: (sourceId: string, bin: Bin) => void;
   onReady: (b: EditorBinding) => void;
 }) {
+  const [sourceId, setSourceId] = useState(fixedSourceId ?? sources[0]?._id ?? '');
+  const [srcOpen, setSrcOpen] = useState(false);
   const [binName, setBinName] = useState(initial && initial.binName !== '-' ? initial.binName : '');
   const [start, setStart] = useState(initial ? String(initial.start) : '0');
   const [end, setEnd] = useState(initial ? String(initial.end) : '10');
   const [color, setColor] = useState(initial?.color ?? DEFAULT_BIN_COLOR);
 
-  const isValid = start.trim() !== '' && end.trim() !== '' && num(end) > num(start);
+  const isValid = sourceId !== '' && start.trim() !== '' && end.trim() !== '' && num(end) > num(start);
 
   const submit = useCallback(() => {
     if (!isValid) return;
-    onSubmit({ binName: binName.trim() || '-', start: num(start), end: num(end), color });
-  }, [isValid, binName, start, end, color, onSubmit]);
+    onSubmit(sourceId, { binName: binName.trim() || '-', start: num(start), end: num(end), color });
+  }, [isValid, sourceId, binName, start, end, color, onSubmit]);
 
   useEditorBinding(isValid, submit, onReady);
 
+  const showSourcePicker = !fixedSourceId && sources.length > 1;
+
   return (
     <div className="hcfg-editor">
+      {showSourcePicker && (
+        <SelectInput
+          label="Data Source"
+          value={sources.find((s) => s._id === sourceId)?.name || 'Select data source'}
+          isOpen={srcOpen}
+          onClick={() => setSrcOpen((o) => !o)}
+        >
+          <DropdownMenu>
+            {sources.map((s) => (
+              <ActionListItem
+                key={s._id}
+                title={s.name || 'Data Source'}
+                selectionType="Single"
+                isSelected={sourceId === s._id}
+                onClick={() => { setSourceId(s._id); setSrcOpen(false); }}
+              />
+            ))}
+          </DropdownMenu>
+        </SelectInput>
+      )}
       <TextInput label="Bin Name" placeholder="Optional" value={binName} onChange={({ value }: { value: string }) => setBinName(value)} />
       <div className="hcfg-row">
         <TextInput label="Start" necessityIndicator="required" type="number" value={start} onChange={({ value }: { value: string }) => setStart(value)} />
@@ -268,8 +271,6 @@ function BinForm({
 }
 
 // ─── Data Source editor (opens in a side modal, like the Line Chart) ─────────
-
-const DEFAULT_COLORS = ['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316'];
 
 interface EditorBinding {
   submit: () => void;
@@ -633,8 +634,9 @@ export function HistogramWidgetConfiguration({
   const [modalAnchor, setModalAnchor] = useState<{ x: number; y: number }>({ x: 360, y: 120 });
   const [dsExpanded, setDsExpanded] = useState(true);
   const [binsExpanded, setBinsExpanded] = useState(true);
-  // Bin add/edit popup — `binIndex` null = add, number = edit that bin.
-  const [binPanel, setBinPanel] = useState<{ sourceId: string; binIndex: number | null } | null>(null);
+  // Bin add/edit popup. `binIndex` null = add (source chosen in the popup),
+  // number = edit that bin (source fixed). `sourceId` null on header + add.
+  const [binPanel, setBinPanel] = useState<{ sourceId: string | null; binIndex: number | null } | null>(null);
   const [binEditorBinding, setBinEditorBinding] = useState<EditorBinding | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
 
@@ -698,7 +700,7 @@ export function HistogramWidgetConfiguration({
     patchUi({ dataSources: ui.dataSources.map((s) => (s._id === id ? { ...s, bins } : s)) });
 
   // ── Bin popup handlers ──
-  const openBinPanel = (sourceId: string, binIndex: number | null) => {
+  const openBinPanel = (sourceId: string | null, binIndex: number | null) => {
     setModalAnchor(computeModalAnchor());
     setBinEditorBinding(null);
     setBinPanel({ sourceId, binIndex });
@@ -707,15 +709,15 @@ export function HistogramWidgetConfiguration({
     setBinPanel(null);
     setBinEditorBinding(null);
   };
-  const submitBin = (bin: Bin) => {
+  const submitBin = (sourceId: string, bin: Bin) => {
     if (!binPanel) return;
-    const src = ui.dataSources.find((s) => s._id === binPanel.sourceId);
+    const src = ui.dataSources.find((s) => s._id === sourceId);
     if (!src) return;
     const nextBins =
       binPanel.binIndex == null
         ? [...src.bins, bin]
         : src.bins.map((b, i) => (i === binPanel.binIndex ? bin : b));
-    updateSourceBins(binPanel.sourceId, nextBins);
+    updateSourceBins(sourceId, nextBins);
     closeBinPanel();
   };
   const deleteBin = (sourceId: string, binIndex: number) => {
@@ -730,6 +732,7 @@ export function HistogramWidgetConfiguration({
   }
 
   const [aggOpen, setAggOpen] = useState(false);
+  const totalBins = ui.dataSources.reduce((n, s) => n + s.bins.length, 0);
 
   // ── Data tab ────────────────────────────────────────────────────────────────
   const renderDataTab = () => (
@@ -821,46 +824,51 @@ export function HistogramWidgetConfiguration({
           Bins remain per-source; each source gets its own bin editor here. */}
       <ProductAccordionItem
         title="Bins"
+        trailingIcon={
+          totalBins > 0 ? <span className="hcfg-ds-count BodyXSmallMedium">{totalBins}</span> : undefined
+        }
         isExpanded={binsExpanded}
         onToggle={() => setBinsExpanded((v) => !v)}
+        headerAction={
+          ui.dataSources.length > 0 ? (
+            <IconAction
+              small
+              icon={<Plus size={16} />}
+              label="Add bin"
+              onClick={() => {
+                if (!binsExpanded) setBinsExpanded(true);
+                openBinPanel(null, null);
+              }}
+            />
+          ) : undefined
+        }
       >
+        {/* Body is a list only — adding/editing happens in the popup (header +). */}
         {binsExpanded && (
           <div className="hcfg-accordion-body">
             {ui.dataSources.length === 0 ? (
-              <p className="hcfg-field-label BodyXSmallRegular">Add a data source first, then configure its bins here.</p>
+              <p className="hcfg-field-label BodyXSmallRegular">Add a data source first, then add bins with the + above.</p>
+            ) : totalBins === 0 ? (
+              <p className="hcfg-field-label BodyXSmallRegular">No bins yet. Click + to add one.</p>
             ) : (
-              ui.dataSources.map((src, i) => (
-                <div key={src._id} className="hcfg-bin-source">
-                  <div className="hcfg-bin-source__head">
-                    <span className="hcfg-bin-source__title BodyXSmallMedium">{src.name || `Data Source ${i + 1}`}</span>
-                    <Button variant="Secondary" size="XSmall" leadingIcon={<Plus size={14} />} label="Add bin" onClick={() => openBinPanel(src._id, null)} />
-                  </div>
-
-                  {/* Bulk create from a range (optional convenience). */}
-                  <BinGenerator onGenerate={(bins) => updateSourceBins(src._id, bins)} />
-
-                  {src.bins.length === 0 ? (
-                    <p className="hcfg-field-label BodyXSmallRegular">No bins yet. Click “Add bin” to add one, or generate a range above.</p>
-                  ) : (
-                    <div className="hcfg-bin-list">
-                      {src.bins.map((bin, bi) => (
-                        <ListCard
-                          key={bi}
-                          title={bin.binName && bin.binName !== '-' ? bin.binName : `Bin ${bi + 1}`}
-                          subtitle={`${bin.start} – ${bin.end}`}
-                          leadingItem={<span className="hcfg-bin-swatch" style={{ background: bin.color }} />}
-                          trailingItems={
-                            <div className="hcfg-ds-actions">
-                              <IconAction icon={<Edit2 size={14} />} label="Edit bin" onClick={() => openBinPanel(src._id, bi)} />
-                              <IconAction icon={<Trash2 size={14} />} label="Delete bin" onClick={() => deleteBin(src._id, bi)} />
-                            </div>
-                          }
-                        />
-                      ))}
-                    </div>
-                  )}
-                </div>
-              ))
+              <div className="hcfg-bin-list">
+                {ui.dataSources.flatMap((src) =>
+                  src.bins.map((bin, bi) => (
+                    <ListCard
+                      key={`${src._id}-${bi}`}
+                      title={bin.binName && bin.binName !== '-' ? bin.binName : `Bin ${bi + 1}`}
+                      subtitle={`${bin.start} – ${bin.end}${ui.dataSources.length > 1 ? ` · ${src.name || 'Source'}` : ''}`}
+                      leadingItem={<span className="hcfg-bin-swatch" style={{ background: bin.color }} />}
+                      trailingItems={
+                        <div className="hcfg-ds-actions">
+                          <IconAction icon={<Edit2 size={14} />} label="Edit bin" onClick={() => openBinPanel(src._id, bi)} />
+                          <IconAction icon={<Trash2 size={14} />} label="Delete bin" onClick={() => deleteBin(src._id, bi)} />
+                        </div>
+                      }
+                    />
+                  )),
+                )}
+              </div>
             )}
           </div>
         )}
@@ -976,7 +984,9 @@ export function HistogramWidgetConfiguration({
           >
             <ModalBody>
               <BinForm
-                key={isEdit ? `${binPanel.sourceId}-${binPanel.binIndex}` : `${binPanel.sourceId}-new`}
+                key={isEdit ? `${binPanel.sourceId}-${binPanel.binIndex}` : 'new'}
+                sources={ui.dataSources}
+                fixedSourceId={isEdit ? binPanel.sourceId : null}
                 initial={editingBin}
                 onSubmit={submitBin}
                 onReady={setBinEditorBinding}

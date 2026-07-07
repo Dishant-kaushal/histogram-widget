@@ -13,9 +13,31 @@ import { validateSSOToken } from '../iosense-sdk/api';
 import { resolve } from '../iosense-sdk/mini-engine';
 import type { DataEntry, HistogramEnvelope } from '../iosense-sdk/types';
 
+// Dev-only: synthesize a bell-ish series (~600 pts in [0,100] over ~5 days) for
+// each binding so the widget preview renders WITHOUT a backend token. Lets you
+// see bars appear as you add bins locally. Real data replaces this once a token
+// is provided.
+function mockSeriesData(envelope: HistogramEnvelope): DataEntry[] {
+  const start = 1_700_000_000_000;
+  let seed = 7;
+  const rand = () => {
+    seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+    return seed / 0x7fffffff;
+  };
+  const slots = Array.from({ length: 600 }, (_, i) => {
+    const v = ((rand() + rand() + rand()) / 3) * 100;
+    return { from: start + i * 12 * 60 * 1000, to: start + i * 12 * 60 * 1000, label: '', value: Math.round(v * 100) / 100, quality: 'good' };
+  });
+  return (envelope.dynamicBindingPathList ?? []).map((b) => ({
+    key: b.key,
+    value: { __type: 'series' as const, path: '', meta: {} as never, range: { from: 0, to: 0 }, slots },
+  }));
+}
+
 export default function Home() {
   const [envelope, setEnvelope] = useState<HistogramEnvelope | undefined>(undefined);
   const [data, setData] = useState<DataEntry[]>([]);
+  const [loading, setLoading] = useState(false);
   const [token, setToken] = useState('');
   const [authError, setAuthError] = useState('');
   // Render the configurator/widget client-only. The design-sdk's
@@ -44,14 +66,26 @@ export default function Home() {
     }
   }, []);
 
-  // Re-resolve whenever the envelope or token changes — real resolveAndCompute call
+  // Re-resolve whenever the envelope or token changes. With a token → real
+  // resolveAndCompute. Without one → inject mock series so the preview renders
+  // locally (dev convenience).
   useEffect(() => {
-    if (!envelope || !token) return;
+    if (!envelope) return;
+    if (!token) {
+      setData(mockSeriesData(envelope));
+      setLoading(false);
+      return;
+    }
+    let cancelled = false;
     console.log('[Harness] resolving envelope:', envelope.dynamicBindingPathList);
+    setLoading(true);
     resolve(envelope, { authentication: token }).then(({ data: resolved }) => {
+      if (cancelled) return;
       console.log('[Harness] resolved data:', resolved);
       setData(resolved);
+      setLoading(false);
     });
+    return () => { cancelled = true; };
   }, [envelope, token]);
 
   return (
@@ -129,6 +163,7 @@ export default function Home() {
             <HistogramWidget
               config={envelope.uiConfig}
               data={data}
+              loading={loading}
               onEvent={(e) => console.log('[Widget Event]', e)}
             />
           ) : (
