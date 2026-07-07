@@ -131,6 +131,25 @@
   gap: var(--spacing-04);
 }
 
+/* Chart settings block — plain (non-accordion) section at the top of the Data tab. */
+.hcfg-plain-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-04);
+  padding: var(--spacing-05);
+  border-bottom: var(--global-border-width-thin) solid var(--border-gray-muted);
+}
+
+/* Per-data-source block inside the Bins accordion. */
+.hcfg-bin-source {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-03);
+}
+.hcfg-bin-source__title {
+  color: var(--text-default-secondary);
+}
+
 .hcfg-entry {
   display: flex;
   flex-direction: column;

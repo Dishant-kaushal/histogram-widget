@@ -338,12 +338,11 @@ function DataSourceEditor({
   const [dataPrecision, setDataPrecision] = useState(initial ? String(initial.dataPrecision) : '2');
   const [unit, setUnit] = useState(initial?.unit ?? '');
   const [enableLineChart, setEnableLineChart] = useState(initial?.enableLineChart ?? false);
-  const [automaticBinWidth, setAutomaticBinWidth] = useState(initial?.automaticBinWidth ?? true);
-  // New sources start with no bins — the user adds them (manually or via the
-  // automatic range generator). Editing keeps the source's existing bins.
-  const [bins, setBins] = useState<Bin[]>(initial?.bins ?? []);
+  // Bins are configured in the separate "Bins" accordion, not in this popup.
+  // New sources start with none; editing preserves the source's existing bins.
+  const bins = initial?.bins ?? [];
 
-  const isValid = name.trim().length > 0 && unsPath.trim().length > 0 && bins.length > 0;
+  const isValid = name.trim().length > 0 && unsPath.trim().length > 0;
 
   const submit = useCallback(() => {
     if (!isValid) return;
@@ -354,10 +353,10 @@ function DataSourceEditor({
       dataPrecision: Math.max(0, Math.floor(num(dataPrecision, 2))),
       unit: unit.trim() || undefined,
       enableLineChart,
-      automaticBinWidth,
+      automaticBinWidth: initial?.automaticBinWidth ?? true,
       bins,
     });
-  }, [isValid, initial, existingCount, name, unsPath, dataPrecision, unit, enableLineChart, automaticBinWidth, bins, onSubmit]);
+  }, [isValid, initial, existingCount, name, unsPath, dataPrecision, unit, enableLineChart, bins, onSubmit]);
 
   useEditorBinding(isValid, submit, onReady);
 
@@ -400,14 +399,6 @@ function DataSourceEditor({
         <span className="BodySmallRegular">Enable Data Source Line Chart</span>
         <Switch isChecked={enableLineChart} onChange={({ isChecked }: { isChecked: boolean }) => setEnableLineChart(isChecked)} accessibilityLabel="Enable line chart" />
       </div>
-
-      <Divider />
-
-      <div className="hcfg-switch-row">
-        <span className="BodySmallRegular">Automatic Bin Width</span>
-        <Switch isChecked={automaticBinWidth} onChange={({ isChecked }: { isChecked: boolean }) => setAutomaticBinWidth(isChecked)} accessibilityLabel="Automatic bin width" />
-      </div>
-      <BinEditor bins={bins} idPrefix="editor" automatic={automaticBinWidth} onChange={setBins} />
     </div>
   );
 }
@@ -658,7 +649,6 @@ export function HistogramWidgetConfiguration({
   const [timeTabConfig, setTimeTabConfig] = useState<TimeTabUIConfig | undefined>(
     config?.timeTabConfig ?? (config?.timeConfig as TimeTabUIConfig | undefined),
   );
-  const [general, setGeneral] = useState(config?.general ?? { title: '' });
   const idRef = useState(() => config?._id ?? `histogram_${Date.now()}`)[0];
 
   // Data Source add/edit modal (mirrors the Line Chart's side-modal editor).
@@ -666,7 +656,7 @@ export function HistogramWidgetConfiguration({
   const [editorBinding, setEditorBinding] = useState<EditorBinding | null>(null);
   const [modalAnchor, setModalAnchor] = useState<{ x: number; y: number }>({ x: 360, y: 120 });
   const [dsExpanded, setDsExpanded] = useState(true);
-  const [csExpanded, setCsExpanded] = useState(true);
+  const [binsExpanded, setBinsExpanded] = useState(true);
   const rootRef = useRef<HTMLDivElement | null>(null);
 
   const openSrcPanel = (panel: { mode: 'add' } | { mode: 'edit'; index: number }) => {
@@ -695,17 +685,17 @@ export function HistogramWidgetConfiguration({
     if (config) {
       setUi({ ...DEFAULT_UI_CONFIG, ...config.uiConfig });
       setTimeTabConfig(config.timeTabConfig ?? (config.timeConfig as TimeTabUIConfig | undefined));
-      setGeneral(config.general ?? { title: '' });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [config?._id]);
 
-  function emit(nextUi: HistogramUIConfig, nextTime: TimeTabUIConfig | undefined, gen: { title: string }) {
+  function emit(nextUi: HistogramUIConfig, nextTime: TimeTabUIConfig | undefined) {
     const tc = nextTime ?? FALLBACK_TIME_CONFIG;
     const envelope: HistogramEnvelope = {
       _id: idRef,
       type: 'HistogramWidget',
-      general: gen,
+      // No separate Widget Title field — the chart title names the widget.
+      general: { title: nextUi.chartTitle || 'Histogram' },
       timeConfig: toHostTimeConfig(tc),
       timeTabConfig: tc,
       uiConfig: nextUi,
@@ -718,72 +708,58 @@ export function HistogramWidgetConfiguration({
   const patchUi = (patch: Partial<HistogramUIConfig>) => {
     const next = { ...ui, ...patch };
     setUi(next);
-    emit(next, timeTabConfig, general);
+    emit(next, timeTabConfig);
   };
   const patchPlotLine = (i: number, patch: Partial<HistogramPlotLine>) =>
     patchUi({ plotLines: ui.plotLines.map((p, idx) => (idx === i ? { ...p, ...patch } : p)) });
+  const updateSourceBins = (id: string, bins: Bin[]) =>
+    patchUi({ dataSources: ui.dataSources.map((s) => (s._id === id ? { ...s, bins } : s)) });
 
   function handleTimeConfigChange(next: TimeTabUIConfig) {
     setTimeTabConfig(next);
-    emit(ui, next, general);
+    emit(ui, next);
   }
 
   const [aggOpen, setAggOpen] = useState(false);
 
-  // ── Data tab (v1 Stage 1 "Histogram Config" + Stage 2 "Widget Config" bins) ──
+  // ── Data tab ────────────────────────────────────────────────────────────────
   const renderDataTab = () => (
     <div className="hcfg-tab-content">
-      <ProductAccordionItem
-        title="Chart Settings"
-        isExpanded={csExpanded}
-        onToggle={() => setCsExpanded((v) => !v)}
-      >
-        <div className="hcfg-accordion-body">
-          <TextInput
-            label="Widget Title"
-            name="hcfg-title"
-            value={general.title}
-            placeholder="Histogram"
-            onChange={({ value }: { value: string }) => {
-              const gen = { title: value };
-              setGeneral(gen);
-              emit(ui, timeTabConfig, gen);
-            }}
-          />
-          <TextInput label="Chart Title" name="hcfg-chart-title" value={ui.chartTitle} placeholder="Histogram" onChange={({ value }: { value: string }) => patchUi({ chartTitle: value })} />
-          <TextInput label="Chart Label" name="hcfg-chart-label" value={ui.chartLabel} placeholder="Parameter" onChange={({ value }: { value: string }) => patchUi({ chartLabel: value })} />
+      {/* Chart settings — plain section (not an accordion) */}
+      <div className="hcfg-plain-section">
+        <TextInput label="Chart Title" name="hcfg-chart-title" value={ui.chartTitle} placeholder="Histogram" onChange={({ value }: { value: string }) => patchUi({ chartTitle: value })} />
+        <TextInput label="Chart Label" name="hcfg-chart-label" value={ui.chartLabel} placeholder="Parameter" onChange={({ value }: { value: string }) => patchUi({ chartLabel: value })} />
 
-          <SelectInput
-            label="Aggregation"
-            name="hcfg-agg"
-            value={ui.aggregationMode === 'daily' ? 'Daily (grouped by weekday)' : 'Cumulative'}
-            isOpen={aggOpen}
-            onClick={() => setAggOpen((o) => !o)}
-          >
-            <DropdownMenu>
-              <ActionListItem
-                title="Cumulative"
-                description="One histogram over the whole time range"
-                selectionType="Single"
-                isSelected={ui.aggregationMode === 'cumulative'}
-                onClick={() => { patchUi({ aggregationMode: 'cumulative' }); setAggOpen(false); }}
-              />
-              <ActionListItem
-                title="Daily (grouped by weekday)"
-                description="One column group per day — use a 1-week range"
-                selectionType="Single"
-                isSelected={ui.aggregationMode === 'daily'}
-                onClick={() => { patchUi({ aggregationMode: 'daily' }); setAggOpen(false); }}
-              />
-            </DropdownMenu>
-          </SelectInput>
+        <SelectInput
+          label="Aggregation"
+          name="hcfg-agg"
+          value={ui.aggregationMode === 'daily' ? 'Daily (grouped by weekday)' : 'Cumulative'}
+          isOpen={aggOpen}
+          onClick={() => setAggOpen((o) => !o)}
+        >
+          <DropdownMenu>
+            <ActionListItem
+              title="Cumulative"
+              description="One histogram over the whole time range"
+              selectionType="Single"
+              isSelected={ui.aggregationMode === 'cumulative'}
+              onClick={() => { patchUi({ aggregationMode: 'cumulative' }); setAggOpen(false); }}
+            />
+            <ActionListItem
+              title="Daily (grouped by weekday)"
+              description="One column group per day — use a 1-week range"
+              selectionType="Single"
+              isSelected={ui.aggregationMode === 'daily'}
+              onClick={() => { patchUi({ aggregationMode: 'daily' }); setAggOpen(false); }}
+            />
+          </DropdownMenu>
+        </SelectInput>
 
-          <div className="hcfg-switch-row">
-            <span className="BodySmallRegular">Include Start &amp; End</span>
-            <Switch name="hcfg-include-se" isChecked={ui.includeStartEnd} onChange={({ isChecked }: { isChecked: boolean }) => patchUi({ includeStartEnd: isChecked })} accessibilityLabel="Include start and end" />
-          </div>
+        <div className="hcfg-switch-row">
+          <span className="BodySmallRegular">Include Start &amp; End</span>
+          <Switch name="hcfg-include-se" isChecked={ui.includeStartEnd} onChange={({ isChecked }: { isChecked: boolean }) => patchUi({ includeStartEnd: isChecked })} accessibilityLabel="Include start and end" />
         </div>
-      </ProductAccordionItem>
+      </div>
 
       <ProductAccordionItem
         title="Data Sources"
@@ -806,25 +782,58 @@ export function HistogramWidgetConfiguration({
           />
         }
       >
-        <div className="hcfg-accordion-body">
-          {ui.dataSources.length === 0 && (
-            <p className="hcfg-field-label BodyXSmallRegular">No data source yet. Click + to add one and bind it to a UNS topic.</p>
-          )}
-          {ui.dataSources.map((src, i) => (
-            <ListCard
-              key={src._id}
-              title={src.name || `Data Source ${i + 1}`}
-              subtitle={`${src.bins.length} bin${src.bins.length === 1 ? '' : 's'} · precision ${src.dataPrecision}`}
-              leadingItem={<span className="hcfg-ds-dot" />}
-              trailingItems={
-                <div className="hcfg-ds-actions">
-                  <IconAction icon={<Edit2 size={14} />} label="Edit data source" onClick={() => openSrcPanel({ mode: 'edit', index: i })} />
-                  <IconAction icon={<Trash2 size={14} />} label="Delete data source" onClick={() => patchUi({ dataSources: ui.dataSources.filter((_, idx) => idx !== i) })} />
+        {/* Render body only when expanded — the SDK's height-animation collapse
+            relies on CSS that isn't always present in the host, which left the
+            body visible when "closed". Conditional rendering makes it reliable. */}
+        {dsExpanded && (
+          <div className="hcfg-accordion-body">
+            {ui.dataSources.length === 0 && (
+              <p className="hcfg-field-label BodyXSmallRegular">No data source yet. Click + to add one and bind it to a UNS topic.</p>
+            )}
+            {ui.dataSources.map((src, i) => (
+              <ListCard
+                key={src._id}
+                title={src.name || `Data Source ${i + 1}`}
+                subtitle={`${src.bins.length} bin${src.bins.length === 1 ? '' : 's'} · precision ${src.dataPrecision}`}
+                leadingItem={<span className="hcfg-ds-dot" />}
+                trailingItems={
+                  <div className="hcfg-ds-actions">
+                    <IconAction icon={<Edit2 size={14} />} label="Edit data source" onClick={() => openSrcPanel({ mode: 'edit', index: i })} />
+                    <IconAction icon={<Trash2 size={14} />} label="Delete data source" onClick={() => patchUi({ dataSources: ui.dataSources.filter((_, idx) => idx !== i) })} />
+                  </div>
+                }
+              />
+            ))}
+          </div>
+        )}
+      </ProductAccordionItem>
+
+      {/* Bins — separate accordion so the data-source popup stays uncluttered.
+          Bins remain per-source; each source gets its own bin editor here. */}
+      <ProductAccordionItem
+        title="Bins"
+        isExpanded={binsExpanded}
+        onToggle={() => setBinsExpanded((v) => !v)}
+      >
+        {binsExpanded && (
+          <div className="hcfg-accordion-body">
+            {ui.dataSources.length === 0 ? (
+              <p className="hcfg-field-label BodyXSmallRegular">Add a data source first, then configure its bins here.</p>
+            ) : (
+              ui.dataSources.map((src, i) => (
+                <div key={src._id} className="hcfg-bin-source">
+                  <span className="hcfg-bin-source__title BodyXSmallMedium">{src.name || `Data Source ${i + 1}`}</span>
+                  <BinEditor
+                    bins={src.bins}
+                    idPrefix={`bins-${src._id}`}
+                    automatic
+                    onChange={(bins) => updateSourceBins(src._id, bins)}
+                  />
                 </div>
-              }
-            />
-          ))}
-        </div>
+              ))
+            )}
+          </div>
+        )}
       </ProductAccordionItem>
     </div>
   );
