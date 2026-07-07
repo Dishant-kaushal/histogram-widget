@@ -11,6 +11,9 @@ import { createRoot, type Root } from 'react-dom/client';
 import { HistogramWidget } from './HistogramWidget';
 import { resolve } from '../../iosense-sdk/mini-engine';
 import type { DataEntry, HistogramEnvelope, WidgetEvent } from '../../iosense-sdk/types';
+// Bundle the design-sdk stylesheet so the widget's SDK components (EmptyState,
+// etc.) are styled inside the host's shadow root, which loads only this bundle CSS.
+import '@faclon-labs/design-sdk/styles.css';
 
 interface WidgetProps {
   config?: HistogramEnvelope;

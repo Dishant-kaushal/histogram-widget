@@ -4,6 +4,11 @@ import React from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { HistogramWidgetConfiguration } from './HistogramWidgetConfiguration';
 import type { HistogramEnvelope } from '../../iosense-sdk/types';
+// Bundle the full design-sdk stylesheet into the config bundle. The host does NOT
+// load it separately for the config surface, so without this the SDK components
+// (accordions, inputs, modals) render unstyled → overlap/broken layout. (Only the
+// Next.js dev harness imports it via layout.tsx, which is why dev looked fine.)
+import '@faclon-labs/design-sdk/styles.css';
 
 interface ConfigProps {
   config?: HistogramEnvelope;

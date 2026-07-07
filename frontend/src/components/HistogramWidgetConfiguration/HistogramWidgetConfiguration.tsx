@@ -205,88 +205,64 @@ function IconAction({
 }
 
 
-// ─── Bin editor ───────────────────────────────────────────────────────────────
+// ─── Bin generator (bulk create from a range) ────────────────────────────────
 
-function BinEditor({
-  bins,
-  idPrefix,
-  automatic,
-  onChange,
+function BinGenerator({ onGenerate }: { onGenerate: (bins: Bin[]) => void }) {
+  const [min, setMin] = useState('0');
+  const [max, setMax] = useState('100');
+  const [count, setCount] = useState('10');
+  return (
+    <div className="hcfg-bin-generator">
+      <TextInput label="Min" value={min} onChange={({ value }: { value: string }) => setMin(value)} />
+      <TextInput label="Max" value={max} onChange={({ value }: { value: string }) => setMax(value)} />
+      <TextInput label="Bins" value={count} onChange={({ value }: { value: string }) => setCount(value)} />
+      <Button
+        variant="Secondary"
+        size="Small"
+        label="Generate"
+        onClick={() => {
+          const groups = createGroups(num(min), num(max), Math.floor(num(count)));
+          if (groups.length === 0) return;
+          onGenerate(groups.map(([start, end]) => ({ start, end, binName: '-', color: DEFAULT_BIN_COLOR })));
+        }}
+      />
+    </div>
+  );
+}
+
+// ─── Single-bin form (opens in the Add/Edit Bin popup, like a data source) ───
+
+function BinForm({
+  initial,
+  onSubmit,
+  onReady,
 }: {
-  bins: Bin[];
-  idPrefix: string;
-  automatic: boolean;
-  onChange: (bins: Bin[]) => void;
+  initial: Bin | null;
+  onSubmit: (bin: Bin) => void;
+  onReady: (b: EditorBinding) => void;
 }) {
-  const [genMin, setGenMin] = useState('0');
-  const [genMax, setGenMax] = useState('100');
-  const [genCount, setGenCount] = useState('10');
+  const [binName, setBinName] = useState(initial && initial.binName !== '-' ? initial.binName : '');
+  const [start, setStart] = useState(initial ? String(initial.start) : '0');
+  const [end, setEnd] = useState(initial ? String(initial.end) : '10');
+  const [color, setColor] = useState(initial?.color ?? DEFAULT_BIN_COLOR);
 
-  const generate = () => {
-    const groups = createGroups(num(genMin), num(genMax), Math.floor(num(genCount)));
-    if (groups.length === 0) return;
-    onChange(groups.map(([start, end]) => ({ start, end, binName: '-', color: DEFAULT_BIN_COLOR })));
-  };
+  const isValid = start.trim() !== '' && end.trim() !== '' && num(end) > num(start);
 
-  const updateBin = (i: number, patch: Partial<Bin>) =>
-    onChange(bins.map((b, idx) => (idx === i ? { ...b, ...patch } : b)));
+  const submit = useCallback(() => {
+    if (!isValid) return;
+    onSubmit({ binName: binName.trim() || '-', start: num(start), end: num(end), color });
+  }, [isValid, binName, start, end, color, onSubmit]);
+
+  useEditorBinding(isValid, submit, onReady);
 
   return (
-    <div className="hcfg-entry">
-      {automatic && (
-        <>
-          <span className="hcfg-field-label BodyXSmallMedium">Automatic bin width — from range</span>
-          <div className="hcfg-bin-generator">
-            <TextInput label="Min" name={`${idPrefix}-min`} value={genMin} onChange={({ value }: { value: string }) => setGenMin(value)} />
-            <TextInput label="Max" name={`${idPrefix}-max`} value={genMax} onChange={({ value }: { value: string }) => setGenMax(value)} />
-            <TextInput label="Bins" name={`${idPrefix}-count`} value={genCount} onChange={({ value }: { value: string }) => setGenCount(value)} />
-            <Button variant="Secondary" size="Small" label="Generate" onClick={generate} />
-          </div>
-        </>
-      )}
-
-      {bins.length > 0 && <Divider />}
-
-      {bins.map((bin, i) => (
-        <div key={i} className="hcfg-bin-item">
-          <div className="hcfg-bin-item__head">
-            <span className="hcfg-bin-item__num BodyXSmallRegular">Bin {i + 1}</span>
-            <span className="hcfg-bin-item__swatch" style={{ backgroundColor: bin.color }} />
-            <Button
-              variant="Secondary"
-              color="Negative"
-              size="XSmall"
-              label="✕"
-              onClick={() => onChange(bins.filter((_, idx) => idx !== i))}
-            />
-          </div>
-          <TextInput
-            label="Name"
-            name={`${idPrefix}-bin-${i}-name`}
-            value={bin.binName}
-            placeholder="-"
-            onChange={({ value }: { value: string }) => updateBin(i, { binName: value })}
-          />
-          <div className="hcfg-row">
-            <TextInput label="Start" name={`${idPrefix}-bin-${i}-start`} value={String(bin.start)} onChange={({ value }: { value: string }) => updateBin(i, { start: num(value) })} />
-            <TextInput label="End" name={`${idPrefix}-bin-${i}-end`} value={String(bin.end)} onChange={({ value }: { value: string }) => updateBin(i, { end: num(value) })} />
-          </div>
-          <ColorInput label="Color" placeholder="Select color" value={bin.color} onChange={(v: string) => updateBin(i, { color: v })} />
-        </div>
-      ))}
-
-      <div className="hcfg-add-row">
-        <Button
-          variant="Gray"
-          size="Small"
-          label="+ Add bin"
-          onClick={() => {
-            const last = bins[bins.length - 1];
-            const start = last ? last.end : 0;
-            onChange([...bins, { start, end: start + 10, binName: '-', color: DEFAULT_BIN_COLOR }]);
-          }}
-        />
+    <div className="hcfg-editor">
+      <TextInput label="Bin Name" placeholder="Optional" value={binName} onChange={({ value }: { value: string }) => setBinName(value)} />
+      <div className="hcfg-row">
+        <TextInput label="Start" necessityIndicator="required" type="number" value={start} onChange={({ value }: { value: string }) => setStart(value)} />
+        <TextInput label="End" necessityIndicator="required" type="number" value={end} onChange={({ value }: { value: string }) => setEnd(value)} />
       </div>
+      <ColorInput label="Color" placeholder="Select color" value={color} onChange={(v: string) => setColor(v)} />
     </div>
   );
 }
@@ -657,21 +633,27 @@ export function HistogramWidgetConfiguration({
   const [modalAnchor, setModalAnchor] = useState<{ x: number; y: number }>({ x: 360, y: 120 });
   const [dsExpanded, setDsExpanded] = useState(true);
   const [binsExpanded, setBinsExpanded] = useState(true);
+  // Bin add/edit popup — `binIndex` null = add, number = edit that bin.
+  const [binPanel, setBinPanel] = useState<{ sourceId: string; binIndex: number | null } | null>(null);
+  const [binEditorBinding, setBinEditorBinding] = useState<EditorBinding | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
 
-  const openSrcPanel = (panel: { mode: 'add' } | { mode: 'edit'; index: number }) => {
+  // Position a side popup beside the config panel; clamp so it's always fully
+  // on-screen (the host embed can push a fixed-position modal off-view otherwise).
+  const computeModalAnchor = () => {
     const panelEl = (rootRef.current?.closest('.hcfg') as HTMLElement | null) ?? rootRef.current;
     const r = panelEl?.getBoundingClientRect();
     const MODAL_W = 320;
     const vw = typeof window !== 'undefined' ? window.innerWidth : 1200;
     const vh = typeof window !== 'undefined' ? window.innerHeight : 800;
-    // Prefer beside the config panel; clamp so the modal is always fully on-screen
-    // (in the host's narrow embed the panel's right edge can be near the viewport
-    // edge, which would push a fixed-position modal out of view = "popup not showing").
     const desiredX = (r?.right ?? 340) + 16;
     const x = Math.max(12, Math.min(desiredX, vw - MODAL_W - 12));
     const y = Math.max(12, Math.min(r?.top ?? 72, vh - 540));
-    setModalAnchor({ x, y });
+    return { x, y };
+  };
+
+  const openSrcPanel = (panel: { mode: 'add' } | { mode: 'edit'; index: number }) => {
+    setModalAnchor(computeModalAnchor());
     setEditorBinding(null);
     setSrcPanel(panel);
   };
@@ -714,6 +696,33 @@ export function HistogramWidgetConfiguration({
     patchUi({ plotLines: ui.plotLines.map((p, idx) => (idx === i ? { ...p, ...patch } : p)) });
   const updateSourceBins = (id: string, bins: Bin[]) =>
     patchUi({ dataSources: ui.dataSources.map((s) => (s._id === id ? { ...s, bins } : s)) });
+
+  // ── Bin popup handlers ──
+  const openBinPanel = (sourceId: string, binIndex: number | null) => {
+    setModalAnchor(computeModalAnchor());
+    setBinEditorBinding(null);
+    setBinPanel({ sourceId, binIndex });
+  };
+  const closeBinPanel = () => {
+    setBinPanel(null);
+    setBinEditorBinding(null);
+  };
+  const submitBin = (bin: Bin) => {
+    if (!binPanel) return;
+    const src = ui.dataSources.find((s) => s._id === binPanel.sourceId);
+    if (!src) return;
+    const nextBins =
+      binPanel.binIndex == null
+        ? [...src.bins, bin]
+        : src.bins.map((b, i) => (i === binPanel.binIndex ? bin : b));
+    updateSourceBins(binPanel.sourceId, nextBins);
+    closeBinPanel();
+  };
+  const deleteBin = (sourceId: string, binIndex: number) => {
+    const src = ui.dataSources.find((s) => s._id === sourceId);
+    if (!src) return;
+    updateSourceBins(sourceId, src.bins.filter((_, i) => i !== binIndex));
+  };
 
   function handleTimeConfigChange(next: TimeTabUIConfig) {
     setTimeTabConfig(next);
@@ -822,13 +831,34 @@ export function HistogramWidgetConfiguration({
             ) : (
               ui.dataSources.map((src, i) => (
                 <div key={src._id} className="hcfg-bin-source">
-                  <span className="hcfg-bin-source__title BodyXSmallMedium">{src.name || `Data Source ${i + 1}`}</span>
-                  <BinEditor
-                    bins={src.bins}
-                    idPrefix={`bins-${src._id}`}
-                    automatic
-                    onChange={(bins) => updateSourceBins(src._id, bins)}
-                  />
+                  <div className="hcfg-bin-source__head">
+                    <span className="hcfg-bin-source__title BodyXSmallMedium">{src.name || `Data Source ${i + 1}`}</span>
+                    <Button variant="Secondary" size="XSmall" leadingIcon={<Plus size={14} />} label="Add bin" onClick={() => openBinPanel(src._id, null)} />
+                  </div>
+
+                  {/* Bulk create from a range (optional convenience). */}
+                  <BinGenerator onGenerate={(bins) => updateSourceBins(src._id, bins)} />
+
+                  {src.bins.length === 0 ? (
+                    <p className="hcfg-field-label BodyXSmallRegular">No bins yet. Click “Add bin” to add one, or generate a range above.</p>
+                  ) : (
+                    <div className="hcfg-bin-list">
+                      {src.bins.map((bin, bi) => (
+                        <ListCard
+                          key={bi}
+                          title={bin.binName && bin.binName !== '-' ? bin.binName : `Bin ${bi + 1}`}
+                          subtitle={`${bin.start} – ${bin.end}`}
+                          leadingItem={<span className="hcfg-bin-swatch" style={{ background: bin.color }} />}
+                          trailingItems={
+                            <div className="hcfg-ds-actions">
+                              <IconAction icon={<Edit2 size={14} />} label="Edit bin" onClick={() => openBinPanel(src._id, bi)} />
+                              <IconAction icon={<Trash2 size={14} />} label="Delete bin" onClick={() => deleteBin(src._id, bi)} />
+                            </div>
+                          }
+                        />
+                      ))}
+                    </div>
+                  )}
                 </div>
               ))
             )}
@@ -915,6 +945,46 @@ export function HistogramWidgetConfiguration({
           </ModalBody>
         </Modal>
       )}
+
+      {binPanel && (() => {
+        const src = ui.dataSources.find((s) => s._id === binPanel.sourceId);
+        const editingBin = binPanel.binIndex != null ? src?.bins[binPanel.binIndex] ?? null : null;
+        const isEdit = binPanel.binIndex != null;
+        return (
+          <Modal
+            isOpen
+            onClose={closeBinPanel}
+            positionX={modalAnchor.x}
+            positionY={modalAnchor.y}
+            className="hcfg-side-modal"
+            header={<ModalHeader title={isEdit ? 'Edit Bin' : 'Add Bin'} onClose={closeBinPanel} />}
+            footer={
+              <ModalFooter
+                primaryAction={
+                  <Button
+                    variant="Primary"
+                    size="Small"
+                    isFullWidth
+                    label={isEdit ? 'Save' : 'Add Bin'}
+                    isDisabled={!binEditorBinding || !binEditorBinding.isValid}
+                    onClick={() => { if (binEditorBinding?.isValid) binEditorBinding.submit(); }}
+                  />
+                }
+                secondaryAction={<Button variant="Secondary" size="Small" isFullWidth label="Cancel" onClick={closeBinPanel} />}
+              />
+            }
+          >
+            <ModalBody>
+              <BinForm
+                key={isEdit ? `${binPanel.sourceId}-${binPanel.binIndex}` : `${binPanel.sourceId}-new`}
+                initial={editingBin}
+                onSubmit={submitBin}
+                onReady={setBinEditorBinding}
+              />
+            </ModalBody>
+          </Modal>
+        );
+      })()}
     </div>
   );
 }
