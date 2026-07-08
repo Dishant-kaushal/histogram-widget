@@ -54,8 +54,8 @@ export async function resolve(
   }
 
   try {
-    const tc = envelope.timeConfig as HostTimeConfig | TimeTabUIConfig | undefined;
-    const periodicity = ctx.periodicity ?? tc?.defaultPeriodicity ?? envelope.timeTabConfig?.defaultPeriodicity;
+    // Periodicity lives on the raw SDK config; `timeConfig` is now the host shape.
+    const periodicity = ctx.periodicity ?? envelope.timeTabConfig?.defaultPeriodicity;
     const resolution = periodicityToResolution(periodicity);
     const items = await resolveAndCompute(
       ctx.authentication,
@@ -122,12 +122,12 @@ function computeWindow(
   override?: { startTime: number; endTime: number },
 ): { startTime: number; endTime: number } {
   if (override) return override;
-  const tc = envelope.timeConfig as HostTimeConfig | TimeTabUIConfig | undefined;
   const now = Date.now();
+  // Resolve the local preview window from the raw SDK config (durationId +
+  // allDurations); `timeConfig` is the host shape and doesn't carry those.
+  const tc = envelope.timeTabConfig as TimeTabUIConfig | undefined;
   if (!tc) return { startTime: now - 86_400_000, endTime: now };
-  const durId =
-    (tc as HostTimeConfig).defaultDurationId ?? (tc as TimeTabUIConfig).defaultDurationId;
-  const dur = tc.allDurations?.find((d) => d.id === durId);
+  const dur = tc.allDurations?.find((d) => d.id === tc.defaultDurationId);
   if (dur) return { startTime: computePresetStart(dur, now), endTime: now };
   return { startTime: now - 86_400_000, endTime: now };
 }

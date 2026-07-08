@@ -104,33 +104,40 @@ export interface GTPChart {
 }
 
 /**
- * Host (iosense Lens) time config shape — the query-engine reads this to derive
- * startTime/endTime/timezone for resolveAndCompute. Produced by toHostTimeConfig()
- * from the SDK's TimeTabUIConfig. Mirrors the deployed Column/Line Chart widgets.
+ * Host (iosense Lens) time config shape — MUST match the host DataLayer's
+ * `TimeConfig` exactly (src/app/data-layer/types + time-calculator). The query
+ * engine reads `timeConfig` directly: `cycleTime.hour` (never null) and
+ * `defaultDuration.{xPeriod,xEvent,yPeriod,yEvent,navigation,x,y,periodicities}`.
+ * A mismatched shape throws "Cannot read properties of undefined (reading 'hour')".
  */
+export interface HostCycleTime {
+  identifier?: string;
+  hour: string;
+  minute: string;
+  dayOfWeek: number;
+  date: string;
+  month: string;
+  year?: string;
+}
+export interface HostDefaultDuration {
+  id: string;
+  label: string;
+  calendarType?: string;
+  isBuiltIn?: boolean;
+  navigation: 'Previous' | 'Next';
+  x: number;
+  xPeriod: string;
+  xEvent: string;
+  y: number;
+  yPeriod: string;
+  yEvent: string;
+  periodicities?: string[];
+}
 export interface HostTimeConfig {
   timezone: string;
-  type: 'local' | 'fixed' | 'global';
-  pickerType: 'local' | 'fixed' | 'global';
-  cycleTime: GTPCycleTimeConfig | null;
-  startTime: number | null;
-  endTime: number | null;
-  fixedDuration?: {
-    id: 'fixed';
-    label: string;
-    navigation: string;
-    x: number;
-    xPeriod: string;
-    xEvent: string;
-    y: number;
-    yPeriod: string;
-    yEvent: string;
-  };
-  defaultDurationId: string;
-  allDurations: TimeTabUIConfig['allDurations'];
-  defaultPeriodicity: string;
-  shifts?: TimeTabUIConfig['shifts'];
-  shiftAggregator?: string;
+  defaultDuration: HostDefaultDuration;
+  cycleTime: HostCycleTime;
+  shifts: unknown[];
 }
 
 // ─── Histogram domain model (ported from IO Lens v1 actualHistogram) ─────────

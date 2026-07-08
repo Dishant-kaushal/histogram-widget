@@ -131,38 +131,62 @@ function buildDynamicBindingPathList(uiConfig: HistogramUIConfig): BindingEntry[
   return paths;
 }
 
-/** Transform the SDK TimeTabUIConfig into the host-shape timeConfig the Lens engine reads. */
+/**
+ * Transform the SDK TimeTabUIConfig into the host DataLayer's `TimeConfig` shape.
+ * The host reads `timeConfig` DIRECTLY: `cycleTime.hour` (never null) and a
+ * resolved `defaultDuration.{x,xPeriod,xEvent,y,yPeriod,yEvent,navigation}`.
+ * (The Column/Line/Pie widgets emit this same shape — a mismatch throws
+ * "Cannot read properties of undefined (reading 'hour')" in the query engine.)
+ */
 function toHostTimeConfig(t: TimeTabUIConfig): HostTimeConfig {
-  const pickerType = (t.linkTimeWith ?? t.timeType ?? 'local') as 'local' | 'fixed' | 'global';
-  const fd = t.fixed?.duration;
-  const fixedDuration =
-    pickerType === 'fixed' && fd
-      ? {
-          id: 'fixed' as const,
-          label: fd.name || 'Fixed',
-          navigation: fd.navigation ?? 'Previous',
-          x: Number(fd.x) || 0,
-          xPeriod: fd.xPeriod ?? 'day',
-          xEvent: fd.xEvent ?? 'Now',
-          y: Number(fd.y) || 0,
-          yPeriod: fd.yPeriod ?? 'day',
-          yEvent: fd.yEvent ?? 'Now',
-        }
-      : undefined;
-  const cycleTime = (pickerType === 'fixed' ? t.fixed?.cycleTime : t.cycleTime) ?? null;
+  const dur = t.allDurations?.find((d) => d.id === t.defaultDurationId);
   return {
-    timezone: t.timezone,
-    type: pickerType === 'global' ? 'local' : pickerType,
-    pickerType,
-    cycleTime,
-    startTime: null,
-    endTime: null,
-    fixedDuration,
-    defaultDurationId: t.defaultDurationId,
-    allDurations: t.allDurations ?? [],
-    defaultPeriodicity:
-      pickerType === 'fixed' && fd?.periodicity ? fd.periodicity.toLowerCase() : t.defaultPeriodicity,
-    shifts: pickerType === 'fixed' ? t.fixed?.shifts ?? t.shifts : t.shifts,
+    timezone: t.timezone || 'Asia/Kolkata',
+    defaultDuration: toHostDuration(dur, t.defaultPeriodicity),
+    // Cycle start-of-period offset. Zeros are fine for a non-shift widget, but it
+    // MUST be a non-null object — the host does parseInt(cycleTime.hour).
+    cycleTime: { identifier: 'default', hour: '0', minute: '0', dayOfWeek: 0, date: '1', month: 'January', year: '' },
+    shifts: (t.shifts as unknown[]) ?? [],
+  };
+}
+
+/** Map an SDK duration to the host's "last X <period> → now" resolved shape. */
+function toHostDuration(
+  dur: TimeTabUIConfig['allDurations'][number] | undefined,
+  periodicity?: string,
+): HostTimeConfig['defaultDuration'] {
+  const CAL: Record<string, { x: number; period: string }> = {
+    today: { x: 1, period: 'day' },
+    yesterday: { x: 1, period: 'day' },
+    current_week: { x: 7, period: 'day' },
+    previous_week: { x: 7, period: 'day' },
+    current_month: { x: 30, period: 'day' },
+    previous_month: { x: 30, period: 'day' },
+  };
+  const d = dur as
+    | { id?: string; label?: string; x?: number; xPeriod?: string; calendarType?: string; periodicities?: string[] }
+    | undefined;
+  const periodicities = d?.periodicities ?? (periodicity ? [periodicity] : ['hourly']);
+  // Relative durations (last24h, last7d, …) already carry x + xPeriod.
+  if (d && typeof d.x === 'number' && d.xPeriod) {
+    return {
+      id: d.id ?? 'default',
+      label: d.label ?? 'Duration',
+      navigation: 'Previous',
+      x: d.x, xPeriod: d.xPeriod, xEvent: 'now',
+      y: 0, yPeriod: d.xPeriod, yEvent: 'now',
+      periodicities,
+    };
+  }
+  // Calendar presets (today/current_week/…) → approximate to a relative window.
+  const m = (d?.calendarType && CAL[d.calendarType]) || { x: 24, period: 'hour' };
+  return {
+    id: d?.id ?? 'last24h',
+    label: d?.label ?? 'Last 24 Hours',
+    navigation: 'Previous',
+    x: m.x, xPeriod: m.period, xEvent: 'now',
+    y: 0, yPeriod: m.period, yEvent: 'now',
+    periodicities,
   };
 }
 
