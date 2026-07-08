@@ -1,53 +1,92 @@
 // HistogramWidget — self-registration for Lens (window.ReactWidgets)
-// Lens calls mount() once, then update() on config changes.
+// Lens calls mount() once, then update() on config/data changes.
 //
-// The host passes the saved envelope as `config` + an auth token. The
-// DataLayer wrapper here runs the mini-engine (one batched resolveAndCompute
-// over dynamicBindingPathList) and feeds the resolved DataEntry[] to the pure
-// HistogramWidget — the widget component itself never fetches.
+// HOST CONTRACT (react-wrapper.component.ts → buildProps): the host passes
+//   { config: <uiConfig — NOT the envelope>, data: <resolved items[]>, timeConfig,
+//     editMode, onEvent }
+// and PUSHES data itself: its DataLayer runs the resolveAndCompute query and
+// calls update(id, props) with the store's items array (raw shape — `slots` on
+// each entry) whenever new data lands. So in the host this wrapper is a pure
+// pass-through: no self-fetching.
+//
+// The mini-engine self-fetch path is kept ONLY for standalone use (no `data`
+// prop, config is a full envelope with dynamicBindingPathList).
 
 import React, { useEffect, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { HistogramWidget } from './HistogramWidget';
 import { resolve } from '../../iosense-sdk/mini-engine';
-import type { DataEntry, HistogramEnvelope, WidgetEvent } from '../../iosense-sdk/types';
+import type { DataEntry, HistogramEnvelope, HistogramUIConfig, WidgetEvent } from '../../iosense-sdk/types';
 // Bundle the design-sdk stylesheet so the widget's SDK components (EmptyState,
 // etc.) are styled inside the host's shadow root, which loads only this bundle CSS.
 import '@faclon-labs/design-sdk/styles.css';
 
 interface WidgetProps {
-  config?: HistogramEnvelope;
+  /** Host: the uiConfig. Standalone/legacy: the full envelope. */
+  config?: HistogramEnvelope | HistogramUIConfig;
+  /** Host-resolved data items. Presence of this prop (even []) = host mode. */
+  data?: unknown;
+  timeConfig?: unknown;
+  editMode?: boolean;
+  onEvent?: (e: WidgetEvent) => void;
   authentication?: string;
 }
 
-function HistogramWidgetDataLayer({ config: envelope, authentication }: WidgetProps) {
-  const [data, setData] = useState<DataEntry[]>([]);
+function isEnvelope(c: WidgetProps['config']): c is HistogramEnvelope {
+  return !!c && typeof c === 'object' && 'uiConfig' in c;
+}
+
+/** Host store emits the items array, or null pre-load, or (defensively) the
+ *  whole response body. Normalize to the DataEntry[] the widget consumes —
+ *  getSeriesData() already tolerates raw items (slots on the entry). */
+function normalizeHostData(d: unknown): DataEntry[] {
+  if (Array.isArray(d)) return d as DataEntry[];
+  if (d && typeof d === 'object' && Array.isArray((d as { data?: unknown }).data)) {
+    return (d as { data: DataEntry[] }).data;
+  }
+  return [];
+}
+
+function HistogramWidgetDataLayer(props: WidgetProps) {
+  const { config, data: hostData, authentication, onEvent } = props;
+  const envelope = isEnvelope(config) ? config : undefined;
+  const uiConfig = (envelope ? envelope.uiConfig : (config as HistogramUIConfig)) ?? ({} as HistogramUIConfig);
+  // The host ALWAYS includes a data prop (data || []); standalone callers don't.
+  const hostMode = hostData !== undefined;
+
+  const [fetched, setFetched] = useState<DataEntry[]>([]);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
+    if (hostMode) return; // host pushes data — never self-fetch
     let cancelled = false;
     if (!envelope?.dynamicBindingPathList?.length) {
-      setData([]);
+      setFetched([]);
       setLoading(false);
       return;
     }
     setLoading(true);
     resolve(envelope, { authentication: authentication ?? '' }).then(({ data: resolved }) => {
       if (!cancelled) {
-        setData(resolved);
+        setFetched(resolved);
         setLoading(false); // clear even when `resolved` is [] → widget shows "No Data", not a stuck spinner
       }
     });
     return () => {
       cancelled = true;
     };
-  }, [envelope, authentication]);
+  }, [hostMode, envelope, authentication]);
+
+  const data = hostMode ? normalizeHostData(hostData) : fetched;
+  console.log('[HistogramWidgetDataLayer]', { hostMode, entries: data.length, hasUiConfig: !!(uiConfig as HistogramUIConfig)?.dataSources });
 
   return React.createElement(HistogramWidget, {
-    config: envelope?.uiConfig ?? ({} as HistogramEnvelope['uiConfig']),
+    config: uiConfig,
     data,
-    loading,
-    onEvent: (e: WidgetEvent) => console.log('[HistogramWidget Event]', e),
+    // Host mode: no explicit flag — the widget's empty-data heuristic covers the
+    // gap between mount and the first data push.
+    loading: hostMode ? undefined : loading,
+    onEvent: onEvent ?? ((e: WidgetEvent) => console.log('[HistogramWidget Event]', e)),
   });
 }
 
