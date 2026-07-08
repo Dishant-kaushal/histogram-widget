@@ -18,6 +18,7 @@ import type { LineSeries } from '@faclon-labs/design-sdk/LineChart';
 import type { ChartPlotLine, ChartPointClickContext } from '@faclon-labs/design-sdk/Chart';
 import { EmptyState } from '@faclon-labs/design-sdk/EmptyState';
 import { NoDataOneIllustration } from '@faclon-labs/design-sdk/EmptyState/illustrations/NoDataOneIllustration';
+import { Info, Settings, MoreVertical } from 'react-feather';
 import type {
   Bin,
   DataEntry,
@@ -132,11 +133,23 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({ config, data, 
   };
   const style = cfg.style;
   const chartInstance = useRef<Highcharts.Chart | null>(null);
+  const rootElRef = useRef<HTMLDivElement | null>(null);
   const [drill, setDrill] = useState<DrillState | null>(null);
-  const [exportOpen, setExportOpen] = useState(false);
+  // Header menus (info / chart-settings / more), one open at a time.
+  const [openMenu, setOpenMenu] = useState<'info' | 'settings' | 'more' | null>(null);
+  // Quick view toggles from the chart-settings menu. `null` = use the mode/config
+  // default; a boolean overrides it for the current view (not persisted to config).
+  const [viewLabels, setViewLabels] = useState(true);
+  const [viewLegend, setViewLegend] = useState<boolean | null>(null);
+  const [viewRanges, setViewRanges] = useState<boolean | null>(null);
 
   const sources: HistogramDataSource[] = cfg.dataSources ?? [];
+  // `bound` = topic is a resolvable {{...}} binding (what the mini-engine needs).
   const boundSources = sources.filter((s) => TOPIC_REGEX.test((s.unsPath ?? '').trim()));
+  // `configured` = the user has added a source with SOME topic. Used for the
+  // "not configured" gate so a non-brace topic shows "No Data" (diagnosable),
+  // not the misleading "Widget not configured".
+  const hasConfiguredSource = sources.some((s) => (s.unsPath ?? '').trim() !== '');
 
   // Resolved points per data source — the only place the data prop is read.
   const sourcePoints: SeriesPoint[][] = useMemo(
@@ -192,6 +205,9 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({ config, data, 
 
   const plotLines: ChartPlotLine[] | undefined = cfg.showPlotLines ? toChartPlotLines(cfg) : undefined;
 
+  // Effective view flags — chart-settings menu overrides fall back to config.
+  const showRanges = viewRanges ?? cfg.showBinRanges;
+
   // ── Chart model — the SDK ColumnChart/LineChart do the theming, legend,
   //    export and empty states; `highchartsOptions` carries the histogram-only
   //    rendering (touching bars, per-bin colors, distribution overlay). ────────
@@ -237,7 +253,7 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({ config, data, 
         (src.bins ?? []).forEach((bin, binIdx) => {
           const name = hasBinName(bin.binName)
             ? bin.binName
-            : `Bin ${binIdx + 1}${cfg.showBinRanges ? ` (${bin.start} - ${bin.end})` : ''}`;
+            : `Bin ${binIdx + 1}${showRanges ? ` (${bin.start} - ${bin.end})` : ''}`;
           series.push({
             name: sources.length > 1 ? `${src.name || `Source ${sourceIdx + 1}`}: ${name}` : name,
             data: grouping.perBin[binIdx] ?? [],
@@ -250,7 +266,7 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({ config, data, 
         kind: 'column',
         categories,
         series,
-        showLegend: true,
+        showLegend: viewLegend ?? true,
         xAxisTitle: 'Day',
         resolveClick: (ctx) => seriesMeta[ctx.seriesIndex] ?? null,
         hcOptions: {
@@ -269,7 +285,7 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({ config, data, 
     }
 
     // ── Cumulative histogram (v1 §8.1) ──────────────────────────────────────
-    const categories = barPoints.map((p) => binLabel(p.bin, p.binIdx, cfg.showBinRanges));
+    const categories = barPoints.map((p) => binLabel(p.bin, p.binIdx, showRanges));
     const manyBins = barPoints.length > 10;
     const overlay = cfg.showDistributionLine ? gaussianOverlayPoints(barPoints.map((p) => p.y)) : [];
 
@@ -285,7 +301,7 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({ config, data, 
           borderWidth: 0,
           cursor: canDrill ? 'pointer' : undefined,
           dataLabels: {
-            enabled: true,
+            enabled: viewLabels,
             inside: true,
             rotation: -90,
             style: {
@@ -315,7 +331,7 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({ config, data, 
           const src = p ? sources[p.sourceIdx] : undefined;
           const unit = src?.unit ? ` ${src.unit}` : '';
           const n = (p?.binIdx ?? idx) + 1;
-          if (cfg.showBinRanges && p?.bin) return `<b>Bin ${n} (${p.bin.start}-${p.bin.end}${unit})</b> : ${this.y}`;
+          if (showRanges && p?.bin) return `<b>Bin ${n} (${p.bin.start}-${p.bin.end}${unit})</b> : ${this.y}`;
           if (p?.bin && hasBinName(p.bin.binName)) return `<b>${p.bin.binName}</b> : ${this.y}`;
           return `<b>Bin ${n}</b> : ${this.y}`;
         },
@@ -345,8 +361,8 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({ config, data, 
       kind: 'column',
       categories,
       series: [{ name: cfg.chartLabel || 'Frequency', data: barPoints.map((p) => p.y), showInLegend: false }],
-      showLegend: false,
-      xAxisTitle: cfg.showBinRanges ? 'Bin Ranges' : 'Bin Data Points',
+      showLegend: viewLegend ?? false,
+      xAxisTitle: showRanges ? 'Bin Ranges' : 'Bin Data Points',
       resolveClick: (ctx) => {
         const p = barPoints[ctx.pointIndex];
         return p ? { sourceIdx: p.sourceIdx, binIdx: p.binIdx } : null;
@@ -354,7 +370,7 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({ config, data, 
       hcOptions,
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cfg, barPoints, drill, sourcePoints, canDrill, style]);
+  }, [cfg, barPoints, drill, sourcePoints, canDrill, style, showRanges, viewLabels, viewLegend]);
 
   // ── Export (v1 §10, alasql replaced with SheetJS/native CSV) ──────────────
 
@@ -402,7 +418,7 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({ config, data, 
   }
 
   function exportData(format: 'XLSX' | 'CSV') {
-    setExportOpen(false);
+    setOpenMenu(null);
     const rows = buildExportRows();
     if (rows.length === 0) return;
     const sheet = XLSX.utils.json_to_sheet(rows);
@@ -415,7 +431,7 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({ config, data, 
   }
 
   function exportPng() {
-    setExportOpen(false);
+    setOpenMenu(null);
     const chart = chartInstance.current as unknown as
       | { exportChartLocal?: (opts: object) => void; exportChart?: (opts: object, chartOpts: object) => void }
       | null;
@@ -423,7 +439,17 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({ config, data, 
     else chart?.exportChart?.({ type: 'image/png' }, {});
   }
 
+  function toggleFullscreen() {
+    setOpenMenu(null);
+    const el = rootElRef.current;
+    if (!el) return;
+    if (document.fullscreenElement) document.exitFullscreen?.();
+    else el.requestFullscreen?.();
+  }
+
   const canExport = !isLoading && hasAnyData && hasAnyBins;
+  // Legend default depends on the mode (daily groups → on; cumulative → off).
+  const legendDefaultOn = cfg.aggregationMode === 'daily';
   const wrapClass = `histogram-widget${style.card.wrapInCard ? '' : ' histogram-widget--bare'}`;
   const wrapStyle: React.CSSProperties = style.card.wrapInCard
     ? {
@@ -443,8 +469,19 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({ config, data, 
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
+  // Diagnostic — surfaces why the widget may show an empty state in the host.
+  console.log('[HistogramWidget] render', {
+    sources: sources.map((s) => ({ name: s.name, unsPath: s.unsPath, bins: s.bins?.length ?? 0 })),
+    boundCount: boundSources.length,
+    dataKeys: data.map((d) => d.key),
+    hasConfiguredSource,
+    hasAnyData,
+    hasAnyBins,
+    isLoading,
+  });
+
   return (
-    <div className={wrapClass} style={wrapStyle}>
+    <div className={wrapClass} style={wrapStyle} ref={rootElRef}>
       <div className="histogram-widget__header">
         <span className="histogram-widget__title" style={titleStyle}>
           {style.hideElements.chartTitle ? '' : cfg.chartTitle || 'Histogram'}
@@ -455,22 +492,93 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({ config, data, 
               ← Back to Histogram
             </button>
           )}
-          {!style.hideElements.exportIcon && (
-            <div className="histogram-widget__export">
+
+          {/* Info — only when a chart description is set. */}
+          {cfg.description?.trim() && (
+            <div className="histogram-widget__menu-wrap">
               <button
-                className="histogram-widget__btn"
-                disabled={!canExport}
-                onClick={() => setExportOpen((v) => !v)}
+                className="histogram-widget__icon-btn"
+                title="Info"
+                aria-label="Info"
+                onClick={() => setOpenMenu((m) => (m === 'info' ? null : 'info'))}
               >
-                Export ▾
+                <Info size={16} />
               </button>
-              {exportOpen && (
+              {openMenu === 'info' && (
                 <>
-                  <div className="histogram-widget__overlay" onClick={() => setExportOpen(false)} />
-                  <div className="histogram-widget__export-menu">
-                    <button onClick={() => exportData('XLSX')}>Download XLSX</button>
-                    <button onClick={() => exportData('CSV')}>Download CSV</button>
-                    <button onClick={exportPng}>Download PNG</button>
+                  <div className="histogram-widget__overlay" onClick={() => setOpenMenu(null)} />
+                  <div className="histogram-widget__popover">{cfg.description}</div>
+                </>
+              )}
+            </div>
+          )}
+
+          {/* Chart settings — quick view toggles. */}
+          <div className="histogram-widget__menu-wrap">
+            <button
+              className="histogram-widget__icon-btn"
+              title="Chart settings"
+              aria-label="Chart settings"
+              onClick={() => setOpenMenu((m) => (m === 'settings' ? null : 'settings'))}
+            >
+              <Settings size={16} />
+            </button>
+            {openMenu === 'settings' && (
+              <>
+                <div className="histogram-widget__overlay" onClick={() => setOpenMenu(null)} />
+                <div className="histogram-widget__menu">
+                  <label className="histogram-widget__menu-check">
+                    <input type="checkbox" checked={viewLabels} onChange={(e) => setViewLabels(e.target.checked)} />
+                    Data Points
+                  </label>
+                  <label className="histogram-widget__menu-check">
+                    <input
+                      type="checkbox"
+                      checked={viewLegend ?? legendDefaultOn}
+                      onChange={(e) => setViewLegend(e.target.checked)}
+                    />
+                    Legend
+                  </label>
+                  <label className="histogram-widget__menu-check">
+                    <input
+                      type="checkbox"
+                      checked={showRanges}
+                      onChange={(e) => setViewRanges(e.target.checked)}
+                    />
+                    Bin Ranges
+                  </label>
+                </div>
+              </>
+            )}
+          </div>
+
+          {/* More — export + fullscreen. */}
+          {!style.hideElements.exportIcon && (
+            <div className="histogram-widget__menu-wrap">
+              <button
+                className="histogram-widget__icon-btn"
+                title="More"
+                aria-label="More options"
+                onClick={() => setOpenMenu((m) => (m === 'more' ? null : 'more'))}
+              >
+                <MoreVertical size={16} />
+              </button>
+              {openMenu === 'more' && (
+                <>
+                  <div className="histogram-widget__overlay" onClick={() => setOpenMenu(null)} />
+                  <div className="histogram-widget__menu">
+                    <button className="histogram-widget__menu-item" disabled={!canExport} onClick={() => exportData('XLSX')}>
+                      Download XLSX
+                    </button>
+                    <button className="histogram-widget__menu-item" disabled={!canExport} onClick={() => exportData('CSV')}>
+                      Download CSV
+                    </button>
+                    <button className="histogram-widget__menu-item" disabled={!canExport} onClick={exportPng}>
+                      Download PNG
+                    </button>
+                    <button className="histogram-widget__menu-item" onClick={toggleFullscreen}>
+                      View full screen
+                    </button>
                   </div>
                 </>
               )}
@@ -480,7 +588,7 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({ config, data, 
       </div>
 
       <div className="histogram-widget__chart-area">
-        {boundSources.length === 0 && (
+        {!hasConfiguredSource && (
           <div className="histogram-widget__empty">
             <EmptyState
               size="Medium"
@@ -491,14 +599,14 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({ config, data, 
           </div>
         )}
 
-        {boundSources.length > 0 && isLoading && (
+        {hasConfiguredSource && isLoading && (
           <div className="histogram-widget__loading">
             <div className="histogram-widget__spinner" />
             <span>Fetching Chart Data …</span>
           </div>
         )}
 
-        {boundSources.length > 0 && !isLoading && !hasAnyData && (
+        {hasConfiguredSource && !isLoading && !hasAnyData && (
           <div className="histogram-widget__empty">
             <EmptyState
               size="Medium"
@@ -509,7 +617,7 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({ config, data, 
           </div>
         )}
 
-        {boundSources.length > 0 && !isLoading && hasAnyData && !hasAnyBins && (
+        {hasConfiguredSource && !isLoading && hasAnyData && !hasAnyBins && (
           <div className="histogram-widget__empty">
             <EmptyState
               size="Medium"
@@ -520,7 +628,7 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({ config, data, 
           </div>
         )}
 
-        {boundSources.length > 0 && !isLoading && hasAnyData && hasAnyBins && (
+        {hasConfiguredSource && !isLoading && hasAnyData && hasAnyBins && (
           <div className="histogram-widget__chart">
             {model.kind === 'column' ? (
               <ColumnChart

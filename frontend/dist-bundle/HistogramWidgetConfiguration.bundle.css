@@ -100,8 +100,21 @@
   overflow: hidden;
 }
 
+/* Config header with a back button, like the other widgets' config forms. */
+.hcfg-header {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-03);
+  padding: var(--spacing-04) var(--spacing-04) var(--spacing-03);
+  flex-shrink: 0;
+}
+.hcfg-header__title {
+  color: var(--text-default-primary);
+}
+
 .hcfg-tabs {
   flex-shrink: 0;
+  padding: 0 var(--spacing-04);
 }
 
 .hcfg-body {
@@ -114,21 +127,28 @@
   padding-bottom: var(--spacing-05);
 }
 
-.hcfg-time-tab,
-.hcfg-style-tab {
+.hcfg-time-tab {
   padding: var(--spacing-04) 0;
 }
 
+/* Style tab body — full padding around the controls. */
 .hcfg-style-tab {
   display: flex;
   flex-direction: column;
   gap: var(--spacing-04);
+  padding: var(--spacing-04);
 }
 
+/* Strip the SDK accordion's inner padding (per request) and re-apply our own
+   horizontal padding so list rows still align with the section headers. */
+.hcfg .fds-pa-item__body-inner {
+  padding: 0;
+}
 .hcfg-accordion-body {
   display: flex;
   flex-direction: column;
   gap: var(--spacing-04);
+  padding: 0 var(--spacing-04) var(--spacing-04);
 }
 
 /* Chart settings block — plain (non-accordion) section at the top of the Data tab. */

@@ -90,6 +90,88 @@
   background: #f2f5fa;
 }
 
+/* Icon header actions (info / chart-settings / more) */
+.histogram-widget__menu-wrap {
+  position: relative;
+}
+.histogram-widget__icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: none;
+  color: #6b7280;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.histogram-widget__icon-btn:hover {
+  background: #eef1f7;
+  color: #3b4560;
+}
+
+.histogram-widget__menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 11;
+  background: #ffffff;
+  border: 1px solid #d7dce8;
+  border-radius: 8px;
+  box-shadow: 0 6px 18px rgba(30, 40, 70, 0.12);
+  display: flex;
+  flex-direction: column;
+  min-width: 170px;
+  padding: 4px;
+  overflow: hidden;
+}
+.histogram-widget__menu-item {
+  border: none;
+  background: none;
+  text-align: left;
+  font-size: 12px;
+  color: #3b4560;
+  padding: 8px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.histogram-widget__menu-item:hover:not(:disabled) {
+  background: #f2f5fa;
+}
+.histogram-widget__menu-item:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.histogram-widget__menu-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #3b4560;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+.histogram-widget__menu-check input {
+  cursor: pointer;
+}
+
+.histogram-widget__popover {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 11;
+  max-width: 260px;
+  background: #ffffff;
+  border: 1px solid #d7dce8;
+  border-radius: 8px;
+  box-shadow: 0 6px 18px rgba(30, 40, 70, 0.12);
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #3b4560;
+}
+
 .histogram-widget__chart-area {
   flex: 1;
   min-height: 0;

@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import type { ReactNode } from 'react';
-import { Plus, Edit2, Trash2 } from 'react-feather';
+import { Plus, Edit2, Trash2, ArrowLeft } from 'react-feather';
 import { UNSPathInput } from '@faclon-labs/design-sdk/UNSPathInput';
 import { ColorInput } from '@faclon-labs/design-sdk/ColorPicker';
 import {
@@ -10,6 +10,7 @@ import {
   TabItem,
   TextInput,
   Button,
+  IconButton,
   SelectInput,
   DropdownMenu,
   ActionListItem,
@@ -595,6 +596,8 @@ interface HistogramWidgetConfigurationProps {
   config?: HistogramEnvelope;
   authentication?: string;
   onChange: (envelope: HistogramEnvelope) => void;
+  /** Host-provided back navigation (matches the other widgets' config forms). */
+  onBack?: () => void;
   // Host-injectable UNS + global timepickers (all-or-none; dev harness uses fallback)
   unsTree?: UNSTree;
   isLoadingTree?: boolean;
@@ -607,6 +610,7 @@ export function HistogramWidgetConfiguration({
   config,
   authentication,
   onChange,
+  onBack,
   unsTree: injectedUnsTree,
   isLoadingTree: injectedIsLoadingTree,
   onLoadWorkspaces,
@@ -740,6 +744,7 @@ export function HistogramWidgetConfiguration({
       {/* Chart settings — plain section (not an accordion) */}
       <div className="hcfg-plain-section">
         <TextInput label="Chart Title" name="hcfg-chart-title" value={ui.chartTitle} placeholder="Histogram" onChange={({ value }: { value: string }) => patchUi({ chartTitle: value })} />
+        <TextInput label="Chart Description" name="hcfg-chart-desc" value={ui.description ?? ''} placeholder="Shown on the widget's info icon" onChange={({ value }: { value: string }) => patchUi({ description: value })} />
         <TextInput label="Chart Label" name="hcfg-chart-label" value={ui.chartLabel} placeholder="Parameter" onChange={({ value }: { value: string }) => patchUi({ chartLabel: value })} />
 
         <SelectInput
@@ -880,6 +885,10 @@ export function HistogramWidgetConfiguration({
 
   return (
     <div className="hcfg" ref={rootRef}>
+      <div className="hcfg-header">
+        <IconButton icon={<ArrowLeft size={16} />} size="Small" accessibilityLabel="Back" onClick={() => onBack?.()} />
+        <span className="hcfg-header__title LabelMediumSemibold">Histogram</span>
+      </div>
       <div className="hcfg-tabs">
         <Tabs variant="Bordered" size="Medium" value={topTab} onChange={(v: string) => setTopTab(v as TopTab)} isFullWidthTabItem>
           {/* onClick is a safety net so switching works even if Tabs onChange doesn't fire */}

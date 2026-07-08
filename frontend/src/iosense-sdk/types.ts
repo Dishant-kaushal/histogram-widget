@@ -192,6 +192,8 @@ export interface HistogramStyling {
 
 export interface HistogramUIConfig {
   chartTitle: string;
+  /** Optional long-form description — surfaced via the widget's info icon. */
+  description?: string;
   chartLabel: string;
   dataSources: HistogramDataSource[];
   aggregationMode: HistogramAggregation;
