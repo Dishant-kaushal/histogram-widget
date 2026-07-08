@@ -1,15 +1,21 @@
 'use client';
 
 import React, { useMemo, useRef, useState } from 'react';
-import Highcharts from 'highcharts';
-import HighchartsReact from 'highcharts-react-official';
+import type Highcharts from 'highcharts';
 import * as XLSX from 'xlsx';
 
-// HC 12 modules self-register on import, but touch browser globals — load
-// client-side only so Next.js prerendering doesn't crash.
+// Load Highcharts' offline exporting so onChartReady instances expose exportChart()
+// for the PNG download. Client-only (these modules touch browser globals).
 if (typeof window !== 'undefined') {
   import('highcharts/modules/exporting');
+  import('highcharts/modules/offline-exporting');
 }
+
+import { ColumnChart } from '@faclon-labs/design-sdk/ColumnChart';
+import type { ColumnSeries } from '@faclon-labs/design-sdk/ColumnChart';
+import { LineChart } from '@faclon-labs/design-sdk/LineChart';
+import type { LineSeries } from '@faclon-labs/design-sdk/LineChart';
+import type { ChartPlotLine, ChartPointClickContext } from '@faclon-labs/design-sdk/Chart';
 import { EmptyState } from '@faclon-labs/design-sdk/EmptyState';
 import { NoDataOneIllustration } from '@faclon-labs/design-sdk/EmptyState/illustrations/NoDataOneIllustration';
 import type {
@@ -86,13 +92,36 @@ interface BarPoint {
   binIdx: number;
   bin: Bin;
   sourceTitle: string;
-  globalIdx: number;
 }
 
 interface DrillState {
   sourceIdx: number;
   binIdx: number;
 }
+
+interface ClickTarget {
+  sourceIdx: number;
+  binIdx: number;
+}
+
+type ChartModel =
+  | {
+      kind: 'column';
+      categories: string[];
+      series: ColumnSeries[];
+      hcOptions: Highcharts.Options;
+      showLegend: boolean;
+      xAxisTitle: string;
+      /** Maps an SDK point-click to a (source, bin) pair for drill-down. */
+      resolveClick: (ctx: ChartPointClickContext) => ClickTarget | null;
+    }
+  | {
+      kind: 'line';
+      categories: string[];
+      series: LineSeries[];
+      hcOptions: Highcharts.Options;
+      xAxisTitle: string;
+    };
 
 export const HistogramWidget: React.FC<HistogramWidgetProps> = ({ config, data, loading, onEvent }) => {
   const cfg: HistogramUIConfig = {
@@ -102,14 +131,9 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({ config, data, 
     style: { ...DEFAULT_STYLE, ...(config?.style ?? {}) },
   };
   const style = cfg.style;
-  const chartRef = useRef<HighchartsReact.RefObject>(null);
+  const chartInstance = useRef<Highcharts.Chart | null>(null);
   const [drill, setDrill] = useState<DrillState | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
-
-  const axisLabelStyle = { color: style.xAxisLabel.textColor, fontSize: '11px' };
-  const yAxisLabelStyle = { color: style.yAxisLabel.textColor, fontSize: '11px' };
-  const axisTitleStyle = { color: style.xAxisLabel.textColor, fontSize: '12px' };
-  const gridColor = style.misc.gridLineColor;
 
   const sources: HistogramDataSource[] = cfg.dataSources ?? [];
   const boundSources = sources.filter((s) => TOPIC_REGEX.test((s.unsPath ?? '').trim()));
@@ -134,7 +158,6 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({ config, data, 
           binIdx,
           bin,
           sourceTitle: src.name || `Source ${sourceIdx + 1}`,
-          globalIdx: pts.length,
         });
       });
     });
@@ -149,6 +172,7 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({ config, data, 
   // A histogram needs bins to draw bars. Bins are configured per source (Data
   // tab → Bins); a source added without bins would otherwise render a blank chart.
   const hasAnyBins = sources.some((s) => (s.bins?.length ?? 0) > 0);
+  const canDrill = sources.some((s) => s.enableLineChart) || cfg.showLineChart;
 
   const handleBarClick = (sourceIdx: number, binIdx: number) => {
     // v1 "Enable Data Source Line Chart" is per-source; fall back to the global flag.
@@ -166,30 +190,13 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({ config, data, 
     onEvent?.({ type: 'FILTER_CHANGE', payload: { drilldown: false } });
   };
 
-  // ── Chart options ─────────────────────────────────────────────────────────
+  const plotLines: ChartPlotLine[] | undefined = cfg.showPlotLines ? toChartPlotLines(cfg) : undefined;
 
-  const chartOptions: Highcharts.Options = useMemo(() => {
-    const base: Highcharts.Options = {
-      chart: {
-        backgroundColor: 'transparent',
-        style: { fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" },
-        animation: { duration: 300 },
-        height: null,
-      },
-      title: {
-        text: style.hideElements.chartTitle ? undefined : cfg.chartTitle || undefined,
-        style: {
-          fontSize: `${style.chartTitle.fontSize}px`,
-          color: style.chartTitle.fontColor,
-          fontWeight: FONT_WEIGHT_MAP[style.chartTitle.fontWeight] ?? '600',
-        },
-      },
-      credits: { enabled: false },
-      exporting: { enabled: false },
-      lang: { noData: 'No Data' },
-    };
-
-    // ── Drill-down line chart (v1 §9: 24 hardcoded hour buckets) ───────────
+  // ── Chart model — the SDK ColumnChart/LineChart do the theming, legend,
+  //    export and empty states; `highchartsOptions` carries the histogram-only
+  //    rendering (touching bars, per-bin colors, distribution overlay). ────────
+  const model: ChartModel = useMemo(() => {
+    // ── Drill-down line chart (v1 §9: 24 hardcoded hour buckets) ─────────────
     if (drill) {
       const src = sources[drill.sourceIdx];
       const bin = src?.bins?.[drill.binIdx];
@@ -203,41 +210,27 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({ config, data, 
           : `Bin ${drill.binIdx + 1} (${bin.start} - ${bin.end})`
         : 'Bin';
       return {
-        ...base,
-        title: { ...base.title, text: `${label} — Hourly Frequency` },
-        xAxis: {
-          categories: HOUR_CATEGORIES,
-          title: { text: 'Hour of Day', style: axisTitleStyle },
-          labels: { style: axisLabelStyle, rotation: -45 },
-          lineColor: style.xAxisLabel.lineColor,
-        },
-        yAxis: {
-          title: { text: 'Frequency', style: axisTitleStyle },
-          gridLineColor: gridColor,
-          labels: { style: yAxisLabelStyle },
-        },
-        legend: { enabled: false },
-        tooltip: {
-          formatter: function (this: Highcharts.Point): string {
-            return `<b>${this.category}</b> : ${this.y}`;
+        kind: 'line',
+        categories: HOUR_CATEGORIES,
+        series: [{ name: label, data: counts, color: bin?.color || '#85B8FF' }],
+        xAxisTitle: 'Hour of Day',
+        hcOptions: {
+          xAxis: { labels: { rotation: -45 } },
+          tooltip: {
+            useHTML: true,
+            formatter: function (this: { key?: string; y?: number }): string {
+              return `<b>${this.key}</b> : ${this.y}`;
+            },
           },
-        } as Highcharts.TooltipOptions,
-        series: [
-          {
-            type: 'line',
-            name: label,
-            data: counts,
-            color: bin?.color || '#85B8FF',
-            marker: { enabled: true, radius: 3 },
-          },
-        ],
+        } as Highcharts.Options,
       };
     }
 
-    // ── Daily grouped columns (v1 §8.3: one series per bin, one group/day) ──
+    // ── Daily grouped columns (v1 §8.3: one series per bin, one group/day) ───
     if (cfg.aggregationMode === 'daily') {
       let categories: string[] = [];
-      const seriesList: Highcharts.SeriesColumnOptions[] = [];
+      const series: ColumnSeries[] = [];
+      const seriesMeta: ClickTarget[] = [];
       sources.forEach((src, sourceIdx) => {
         const grouping = dailyBinCounts(sourcePoints[sourceIdx] ?? [], src.bins ?? [], cfg.includeStartEnd);
         if (grouping.categories.length > categories.length) categories = grouping.categories;
@@ -245,150 +238,123 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({ config, data, 
           const name = hasBinName(bin.binName)
             ? bin.binName
             : `Bin ${binIdx + 1}${cfg.showBinRanges ? ` (${bin.start} - ${bin.end})` : ''}`;
-          seriesList.push({
-            type: 'column',
+          series.push({
             name: sources.length > 1 ? `${src.name || `Source ${sourceIdx + 1}`}: ${name}` : name,
             data: grouping.perBin[binIdx] ?? [],
             color: bin.color || '#85B8FF',
-            custom: { sourceIdx, binIdx },
-          } as Highcharts.SeriesColumnOptions);
+          });
+          seriesMeta.push({ sourceIdx, binIdx });
         });
       });
       return {
-        ...base,
-        xAxis: {
-          categories,
-          title: { text: 'Day', style: axisTitleStyle },
-          labels: { style: axisLabelStyle },
-          lineColor: style.xAxisLabel.lineColor,
-        },
-        yAxis: {
-          title: { text: 'Frequency', style: axisTitleStyle },
-          gridLineColor: gridColor,
-          labels: { style: yAxisLabelStyle },
-          plotLines: cfg.showPlotLines ? toHighchartsPlotLines(cfg) : undefined,
-        },
-        legend: { enabled: true, itemStyle: { fontSize: '11px', color: style.misc.legendTextColor } },
-        tooltip: {
-          formatter: function (this: Highcharts.Point): string {
-            return `<b>${this.category} ${this.series.name}</b> : ${this.y}`;
+        kind: 'column',
+        categories,
+        series,
+        showLegend: true,
+        xAxisTitle: 'Day',
+        resolveClick: (ctx) => seriesMeta[ctx.seriesIndex] ?? null,
+        hcOptions: {
+          plotOptions: {
+            column: { borderWidth: 0, cursor: canDrill ? 'pointer' : undefined },
+            series: { centerInCategory: true },
           },
-        } as Highcharts.TooltipOptions,
-        plotOptions: {
-          column: {
-            borderColor: 'transparent',
-            point: {
-              events: {
-                click: function (this: Highcharts.Point) {
-                  const custom = (this.series.options as Highcharts.SeriesColumnOptions).custom as
-                    | { sourceIdx: number; binIdx: number }
-                    | undefined;
-                  if (custom) handleBarClick(custom.sourceIdx, custom.binIdx);
-                },
-              },
+          tooltip: {
+            useHTML: true,
+            formatter: function (this: { key?: string; y?: number; series?: { name?: string } }): string {
+              return `<b>${this.key} ${this.series?.name}</b> : ${this.y}`;
             },
           },
-        },
-        series: seriesList,
+        } as Highcharts.Options,
       };
     }
 
     // ── Cumulative histogram (v1 §8.1) ──────────────────────────────────────
     const categories = barPoints.map((p) => binLabel(p.bin, p.binIdx, cfg.showBinRanges));
     const manyBins = barPoints.length > 10;
+    const overlay = cfg.showDistributionLine ? gaussianOverlayPoints(barPoints.map((p) => p.y)) : [];
 
-    const columnSeries: Highcharts.SeriesColumnOptions = {
-      type: 'column',
-      name: cfg.chartLabel || 'Parameter',
-      colorByPoint: true,
-      data: barPoints.map((p) => ({
-        y: p.y,
-        color: p.color,
-        custom: { sourceIdx: p.sourceIdx, binIdx: p.binIdx },
-      })),
-      dataLabels: {
-        enabled: true,
-        inside: true,
-        rotation: -90,
-        style: {
-          color: style.dataLabels.color,
-          fontWeight: 'bold',
-          fontSize: `${style.dataLabels.fontSize}px`,
-          textOutline: 'none',
-        },
-        formatter: function (this: Highcharts.Point): string {
-          return this.y ? String(this.y) : '';
-        },
-      } as Highcharts.PlotColumnDataLabelsOptions,
-      showInLegend: false,
-    };
-
-    const seriesList: Highcharts.SeriesOptionsType[] = [columnSeries];
-    if (cfg.showDistributionLine) {
-      const overlay = gaussianOverlayPoints(barPoints.map((p) => p.y));
-      if (overlay.length > 0) {
-        seriesList.push({
-          type: 'spline',
-          name: 'Frequency Distribution',
-          data: overlay,
-          color: style.distribution.color || '#FF6B6B',
-          lineWidth: style.distribution.width || 3,
-          dashStyle: (style.distribution.dashStyle || 'Solid') as Highcharts.DashStyleValue,
-          marker: { enabled: false },
-          zIndex: 5,
-          enableMouseTracking: true,
-        });
-      }
-    }
-
-    return {
-      ...base,
-      xAxis: {
-        categories,
-        title: { text: cfg.showBinRanges ? 'Bin Ranges' : 'Bin Data Points', style: axisTitleStyle },
-        labels: { style: axisLabelStyle, rotation: manyBins ? -45 : 0 },
-        lineColor: style.xAxisLabel.lineColor,
-      },
-      yAxis: {
-        title: { text: 'Frequency', style: axisTitleStyle },
-        gridLineColor: gridColor,
-        labels: { style: yAxisLabelStyle },
-        plotLines: cfg.showPlotLines ? toHighchartsPlotLines(cfg) : undefined,
-      },
-      legend: { enabled: cfg.showDistributionLine, itemStyle: { fontSize: '11px', color: style.misc.legendTextColor } },
-      tooltip: {
-        formatter: function (this: Highcharts.Point): string {
-          if (this.series.type === 'spline') {
-            return `Frequency Distribution: ${Number(this.y).toFixed(2)}`;
-          }
-          const custom = (this.options as { custom?: { sourceIdx: number; binIdx: number } }).custom;
-          const src = custom ? sources[custom.sourceIdx] : undefined;
-          const bin = custom && src ? src.bins?.[custom.binIdx] : undefined;
-          const i = (custom?.binIdx ?? this.index) + 1;
-          const unit = src?.unit ? ` ${src.unit}` : '';
-          if (cfg.showBinRanges && bin) return `<b>Bin ${i} (${bin.start}-${bin.end}${unit})</b> : ${this.y}`;
-          if (bin && hasBinName(bin.binName)) return `<b>${bin.binName}</b> : ${this.y}`;
-          return `<b>Bin ${i}</b> : ${this.y}`;
-        },
-      } as Highcharts.TooltipOptions,
+    const hcOptions: Highcharts.Options = {
+      // colorByPoint + colors → one color per bin (index-aligned to barPoints).
+      colors: barPoints.map((p) => p.color),
+      xAxis: { labels: { rotation: manyBins ? -45 : 0 } },
       plotOptions: {
         column: {
-          borderColor: 'transparent',
-          cursor: sources.some((s) => s.enableLineChart) || cfg.showLineChart ? 'pointer' : undefined,
-          point: {
-            events: {
-              click: function (this: Highcharts.Point) {
-                const custom = (this.options as { custom?: { sourceIdx: number; binIdx: number } }).custom;
-                if (custom) handleBarClick(custom.sourceIdx, custom.binIdx);
-              },
+          colorByPoint: true,
+          pointPadding: 0.03,
+          groupPadding: 0.05,
+          borderWidth: 0,
+          cursor: canDrill ? 'pointer' : undefined,
+          dataLabels: {
+            enabled: true,
+            inside: true,
+            rotation: -90,
+            style: {
+              color: style.dataLabels.color,
+              fontWeight: 'bold',
+              fontSize: `${style.dataLabels.fontSize}px`,
+              textOutline: 'none',
+            },
+            formatter: function (this: { y?: number }): string {
+              return this.y ? String(this.y) : '';
             },
           },
         },
       },
-      series: seriesList,
+      tooltip: {
+        useHTML: true,
+        formatter: function (this: {
+          y?: number;
+          series?: { type?: string };
+          point?: { index?: number };
+        }): string {
+          if (this.series?.type === 'spline') {
+            return `Frequency Distribution: ${Number(this.y).toFixed(2)}`;
+          }
+          const idx = this.point?.index ?? 0;
+          const p = barPoints[idx];
+          const src = p ? sources[p.sourceIdx] : undefined;
+          const unit = src?.unit ? ` ${src.unit}` : '';
+          const n = (p?.binIdx ?? idx) + 1;
+          if (cfg.showBinRanges && p?.bin) return `<b>Bin ${n} (${p.bin.start}-${p.bin.end}${unit})</b> : ${this.y}`;
+          if (p?.bin && hasBinName(p.bin.binName)) return `<b>${p.bin.binName}</b> : ${this.y}`;
+          return `<b>Bin ${n}</b> : ${this.y}`;
+        },
+      },
+      // Distribution overlay as a 2nd (spline) series, merged in by index so the
+      // computed column series at index 0 is preserved.
+      ...(overlay.length > 0
+        ? {
+            series: [
+              {},
+              {
+                type: 'spline',
+                name: 'Frequency Distribution',
+                data: overlay,
+                color: style.distribution.color || '#FF6B6B',
+                lineWidth: style.distribution.width || 3,
+                dashStyle: (style.distribution.dashStyle || 'Solid') as Highcharts.DashStyleValue,
+                marker: { enabled: false },
+                zIndex: 5,
+              },
+            ] as unknown as Highcharts.SeriesOptionsType[],
+          }
+        : {}),
+    };
+
+    return {
+      kind: 'column',
+      categories,
+      series: [{ name: cfg.chartLabel || 'Frequency', data: barPoints.map((p) => p.y), showInLegend: false }],
+      showLegend: false,
+      xAxisTitle: cfg.showBinRanges ? 'Bin Ranges' : 'Bin Data Points',
+      resolveClick: (ctx) => {
+        const p = barPoints[ctx.pointIndex];
+        return p ? { sourceIdx: p.sourceIdx, binIdx: p.binIdx } : null;
+      },
+      hcOptions,
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cfg, barPoints, drill, sourcePoints]);
+  }, [cfg, barPoints, drill, sourcePoints, canDrill, style]);
 
   // ── Export (v1 §10, alasql replaced with SheetJS/native CSV) ──────────────
 
@@ -450,13 +416,14 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({ config, data, 
 
   function exportPng() {
     setExportOpen(false);
-    const chart = chartRef.current?.chart as unknown as
-      | { exportChart?: (opts: object, chartOpts: object) => void }
-      | undefined;
-    chart?.exportChart?.({ type: 'image/png' }, {});
+    const chart = chartInstance.current as unknown as
+      | { exportChartLocal?: (opts: object) => void; exportChart?: (opts: object, chartOpts: object) => void }
+      | null;
+    if (chart?.exportChartLocal) chart.exportChartLocal({ type: 'image/png' });
+    else chart?.exportChart?.({ type: 'image/png' }, {});
   }
 
-  const canExport = !isLoading && hasAnyData;
+  const canExport = !isLoading && hasAnyData && hasAnyBins;
   const wrapClass = `histogram-widget${style.card.wrapInCard ? '' : ' histogram-widget--bare'}`;
   const wrapStyle: React.CSSProperties = style.card.wrapInCard
     ? {
@@ -468,12 +435,18 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({ config, data, 
       }
     : { background: 'transparent', border: 'none' };
 
+  const titleStyle: React.CSSProperties = {
+    fontSize: style.chartTitle.fontSize,
+    color: style.chartTitle.fontColor,
+    fontWeight: FONT_WEIGHT_MAP[style.chartTitle.fontWeight] ?? '600',
+  };
+
   // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
     <div className={wrapClass} style={wrapStyle}>
       <div className="histogram-widget__header">
-        <span className="histogram-widget__title">
+        <span className="histogram-widget__title" style={titleStyle}>
           {style.hideElements.chartTitle ? '' : cfg.chartTitle || 'Histogram'}
         </span>
         <div className="histogram-widget__actions">
@@ -548,29 +521,58 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({ config, data, 
         )}
 
         {boundSources.length > 0 && !isLoading && hasAnyData && hasAnyBins && (
-          <HighchartsReact
-            ref={chartRef}
-            highcharts={Highcharts}
-            options={chartOptions}
-            containerProps={{ style: { width: '100%', height: '100%', minHeight: '320px' } }}
-          />
+          <div className="histogram-widget__chart">
+            {model.kind === 'column' ? (
+              <ColumnChart
+                bare
+                categories={model.categories}
+                series={model.series}
+                showLegend={model.showLegend}
+                plotLines={plotLines}
+                xAxisTitle={model.xAxisTitle}
+                yAxisTitle="Frequency"
+                highchartsOptions={model.hcOptions}
+                onPointClick={
+                  canDrill
+                    ? (ctx: ChartPointClickContext) => {
+                        const t = model.resolveClick(ctx);
+                        if (t) handleBarClick(t.sourceIdx, t.binIdx);
+                      }
+                    : undefined
+                }
+                onChartReady={(inst: Highcharts.Chart) => {
+                  chartInstance.current = inst;
+                }}
+              />
+            ) : (
+              <LineChart
+                bare
+                categories={model.categories}
+                series={model.series}
+                showLegend={false}
+                xAxisTitle={model.xAxisTitle}
+                yAxisTitle="Frequency"
+                highchartsOptions={model.hcOptions}
+                onChartReady={(inst: Highcharts.Chart) => {
+                  chartInstance.current = inst;
+                }}
+              />
+            )}
+          </div>
         )}
       </div>
     </div>
   );
 };
 
-function toHighchartsPlotLines(cfg: HistogramUIConfig): Highcharts.YAxisPlotLinesOptions[] {
+/** Map the widget's plot-line config onto the SDK ChartPlotLine shape. */
+function toChartPlotLines(cfg: HistogramUIConfig): ChartPlotLine[] {
   return (cfg.plotLines ?? []).map((pl) => ({
     value: pl.value,
     color: pl.color || '#ff0000',
     width: pl.lineWidth || 2,
-    dashStyle: (pl.dashStyle || 'Solid') as Highcharts.DashStyleValue,
-    zIndex: 4,
-    label: {
-      text: pl.name || '',
-      style: { color: pl.color || '#ff0000', fontSize: '10px' },
-    },
+    dashStyle: (pl.dashStyle as ChartPlotLine['dashStyle']) || 'Dash',
+    label: pl.name || undefined,
   }));
 }
 

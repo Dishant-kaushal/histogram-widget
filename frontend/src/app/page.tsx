@@ -7,9 +7,17 @@
 // or paste a JWT into the token field.
 
 import { useEffect, useState } from 'react';
+import dynamic from 'next/dynamic';
 import HistogramWidgetConfiguration from '../components/HistogramWidgetConfiguration';
-import { HistogramWidget } from '../components/HistogramWidget/HistogramWidget';
 import { validateSSOToken } from '../iosense-sdk/api';
+
+// The widget pulls the SDK charts (Highcharts) at import time, which crashes
+// Next.js SSR (`Highcharts.AST` is undefined server-side). Load it client-only.
+// Irrelevant to the production bundle — that never runs through Next SSR.
+const HistogramWidget = dynamic(
+  () => import('../components/HistogramWidget/HistogramWidget').then((m) => m.HistogramWidget),
+  { ssr: false },
+);
 import { resolve } from '../iosense-sdk/mini-engine';
 import type { DataEntry, HistogramEnvelope } from '../iosense-sdk/types';
 

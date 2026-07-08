@@ -4,8 +4,14 @@
 // so we can see the chart shape without a backend. Safe to delete.
 
 import { useMemo } from 'react';
-import { HistogramWidget } from '../../components/HistogramWidget/HistogramWidget';
+import dynamic from 'next/dynamic';
 import type { DataEntry, HistogramUIConfig, SeriesSlot } from '../../iosense-sdk/types';
+
+// Client-only — the SDK charts touch Highcharts at import time (breaks Next SSR).
+const HistogramWidget = dynamic(
+  () => import('../../components/HistogramWidget/HistogramWidget').then((m) => m.HistogramWidget),
+  { ssr: false },
+);
 
 // Build a normal-ish distribution of ~600 points in [0,100] across 5 days.
 function mockSlots(): SeriesSlot[] {
