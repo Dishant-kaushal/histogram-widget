@@ -18,6 +18,9 @@ import type { LineSeries } from '@faclon-labs/design-sdk/LineChart';
 import type { ChartPlotLine, ChartPointClickContext } from '@faclon-labs/design-sdk/Chart';
 import { EmptyState } from '@faclon-labs/design-sdk/EmptyState';
 import { NoDataOneIllustration } from '@faclon-labs/design-sdk/EmptyState/illustrations/NoDataOneIllustration';
+import { Tooltip } from '@faclon-labs/design-sdk/Tooltip';
+import { Checkbox } from '@faclon-labs/design-sdk/Checkbox';
+import { exportChart } from '@faclon-labs/design-sdk/Chart';
 import { Info, Settings, MoreVertical } from 'react-feather';
 import type {
   Bin,
@@ -430,13 +433,19 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({ config, data, 
     });
   }
 
-  function exportPng() {
+  // Unified export. Images (SVG/PNG/JPEG) go through the SDK's exportChart off
+  // the live Highcharts instance; CSV/XLSX use our SheetJS rows (richer columns
+  // + reliable regardless of which Highcharts export-data module is loaded).
+  function doExport(format: 'SVG' | 'PNG' | 'JPEG' | 'CSV' | 'XLSX') {
     setOpenMenu(null);
-    const chart = chartInstance.current as unknown as
-      | { exportChartLocal?: (opts: object) => void; exportChart?: (opts: object, chartOpts: object) => void }
-      | null;
-    if (chart?.exportChartLocal) chart.exportChartLocal({ type: 'image/png' });
-    else chart?.exportChart?.({ type: 'image/png' }, {});
+    const fileName = (cfg.chartTitle || 'histogram').replace(/[^\w-]+/g, '_');
+    if (format === 'CSV' || format === 'XLSX') {
+      exportData(format);
+      return;
+    }
+    if (chartInstance.current) {
+      exportChart({ instance: chartInstance.current, engine: 'highcharts', format, fileName });
+    }
   }
 
   function toggleFullscreen() {
@@ -493,27 +502,16 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({ config, data, 
             </button>
           )}
 
-          {/* Info — only when a chart description is set. */}
+          {/* Info — SDK Tooltip, only when a chart description is set. */}
           {cfg.description?.trim() && (
-            <div className="histogram-widget__menu-wrap">
-              <button
-                className="histogram-widget__icon-btn"
-                title="Info"
-                aria-label="Info"
-                onClick={() => setOpenMenu((m) => (m === 'info' ? null : 'info'))}
-              >
+            <Tooltip bodyText={cfg.description} heading={cfg.chartTitle || undefined}>
+              <button className="histogram-widget__icon-btn" aria-label="Chart info">
                 <Info size={16} />
               </button>
-              {openMenu === 'info' && (
-                <>
-                  <div className="histogram-widget__overlay" onClick={() => setOpenMenu(null)} />
-                  <div className="histogram-widget__popover">{cfg.description}</div>
-                </>
-              )}
-            </div>
+            </Tooltip>
           )}
 
-          {/* Chart settings — quick view toggles. */}
+          {/* Chart settings — quick view toggles (SDK checkboxes). */}
           <div className="histogram-widget__menu-wrap">
             <button
               className="histogram-widget__icon-btn"
@@ -526,33 +524,16 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({ config, data, 
             {openMenu === 'settings' && (
               <>
                 <div className="histogram-widget__overlay" onClick={() => setOpenMenu(null)} />
-                <div className="histogram-widget__menu">
-                  <label className="histogram-widget__menu-check">
-                    <input type="checkbox" checked={viewLabels} onChange={(e) => setViewLabels(e.target.checked)} />
-                    Data Points
-                  </label>
-                  <label className="histogram-widget__menu-check">
-                    <input
-                      type="checkbox"
-                      checked={viewLegend ?? legendDefaultOn}
-                      onChange={(e) => setViewLegend(e.target.checked)}
-                    />
-                    Legend
-                  </label>
-                  <label className="histogram-widget__menu-check">
-                    <input
-                      type="checkbox"
-                      checked={showRanges}
-                      onChange={(e) => setViewRanges(e.target.checked)}
-                    />
-                    Bin Ranges
-                  </label>
+                <div className="histogram-widget__menu histogram-widget__menu--checks">
+                  <Checkbox label="Data Points" isChecked={viewLabels} onChange={(e) => setViewLabels(e.target.checked)} />
+                  <Checkbox label="Legend" isChecked={viewLegend ?? legendDefaultOn} onChange={(e) => setViewLegend(e.target.checked)} />
+                  <Checkbox label="Bin Ranges" isChecked={showRanges} onChange={(e) => setViewRanges(e.target.checked)} />
                 </div>
               </>
             )}
           </div>
 
-          {/* More — export + fullscreen. */}
+          {/* More — full screen + download (SVG/PNG/JPEG/CSV/XLSX). */}
           {!style.hideElements.exportIcon && (
             <div className="histogram-widget__menu-wrap">
               <button
@@ -567,18 +548,21 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({ config, data, 
                 <>
                   <div className="histogram-widget__overlay" onClick={() => setOpenMenu(null)} />
                   <div className="histogram-widget__menu">
-                    <button className="histogram-widget__menu-item" disabled={!canExport} onClick={() => exportData('XLSX')}>
-                      Download XLSX
-                    </button>
-                    <button className="histogram-widget__menu-item" disabled={!canExport} onClick={() => exportData('CSV')}>
-                      Download CSV
-                    </button>
-                    <button className="histogram-widget__menu-item" disabled={!canExport} onClick={exportPng}>
-                      Download PNG
-                    </button>
                     <button className="histogram-widget__menu-item" onClick={toggleFullscreen}>
-                      View full screen
+                      View in full screen
                     </button>
+                    <div className="histogram-widget__menu-divider" />
+                    <span className="histogram-widget__menu-label">Download Type</span>
+                    {(['SVG', 'PNG', 'JPEG', 'CSV', 'XLSX'] as const).map((fmt) => (
+                      <button
+                        key={fmt}
+                        className="histogram-widget__menu-item"
+                        disabled={!canExport}
+                        onClick={() => doExport(fmt)}
+                      >
+                        {fmt}
+                      </button>
+                    ))}
                   </div>
                 </>
               )}

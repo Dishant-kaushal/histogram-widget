@@ -143,17 +143,21 @@
   opacity: 0.5;
   cursor: not-allowed;
 }
-.histogram-widget__menu-check {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  color: #3b4560;
+.histogram-widget__menu--checks {
+  gap: 4px;
   padding: 8px 10px;
-  cursor: pointer;
 }
-.histogram-widget__menu-check input {
-  cursor: pointer;
+
+.histogram-widget__menu-divider {
+  height: 1px;
+  background: #eef1f7;
+  margin: 4px 0;
+}
+.histogram-widget__menu-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #9aa3b5;
+  padding: 6px 10px 2px;
 }
 
 .histogram-widget__popover {
