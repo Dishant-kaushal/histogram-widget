@@ -143,9 +143,31 @@
   opacity: 0.5;
   cursor: not-allowed;
 }
-.histogram-widget__menu--checks {
-  gap: 4px;
-  padding: 8px 10px;
+/* Chart-settings (gear) menu — Chart Control header, checkboxes, toggle row. */
+.histogram-widget__menu--settings {
+  gap: 8px;
+  padding: 10px 12px;
+  min-width: 240px;
+}
+.histogram-widget__setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.histogram-widget__setting-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.histogram-widget__setting-title {
+  font-size: 13px;
+  color: #292f2e;
+}
+.histogram-widget__setting-desc {
+  font-size: 11px;
+  line-height: 1.4;
+  color: #8a94a6;
 }
 
 .histogram-widget__menu-divider {

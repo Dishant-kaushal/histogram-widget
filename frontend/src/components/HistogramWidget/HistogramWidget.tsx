@@ -20,6 +20,7 @@ import { EmptyState } from '@faclon-labs/design-sdk/EmptyState';
 import { NoDataOneIllustration } from '@faclon-labs/design-sdk/EmptyState/illustrations/NoDataOneIllustration';
 import { Tooltip } from '@faclon-labs/design-sdk/Tooltip';
 import { Checkbox } from '@faclon-labs/design-sdk/Checkbox';
+import { Switch } from '@faclon-labs/design-sdk/Switch';
 import { exportChart } from '@faclon-labs/design-sdk/Chart';
 import { Info, Settings, MoreVertical } from 'react-feather';
 import type {
@@ -140,11 +141,12 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({ config, data, 
   const [drill, setDrill] = useState<DrillState | null>(null);
   // Header menus (info / chart-settings / more), one open at a time.
   const [openMenu, setOpenMenu] = useState<'info' | 'settings' | 'more' | null>(null);
-  // Quick view toggles from the chart-settings menu. `null` = use the mode/config
-  // default; a boolean overrides it for the current view (not persisted to config).
-  const [viewLabels, setViewLabels] = useState(true);
+  // Chart-control view state (from the gear menu; not persisted to config).
+  const [viewLabels, setViewLabels] = useState(false);
   const [viewLegend, setViewLegend] = useState<boolean | null>(null);
-  const [viewRanges, setViewRanges] = useState<boolean | null>(null);
+  // Cumulative Values = the total distribution across all value ranges (our
+  // "cumulative" mode). Off → daily (grouped by weekday).
+  const [viewCumulative, setViewCumulative] = useState(cfg.aggregationMode !== 'daily');
 
   const sources: HistogramDataSource[] = cfg.dataSources ?? [];
   // `bound` = topic is a resolvable {{...}} binding (what the mini-engine needs).
@@ -208,8 +210,8 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({ config, data, 
 
   const plotLines: ChartPlotLine[] | undefined = cfg.showPlotLines ? toChartPlotLines(cfg) : undefined;
 
-  // Effective view flags — chart-settings menu overrides fall back to config.
-  const showRanges = viewRanges ?? cfg.showBinRanges;
+  // Bin-range x-axis labels come from the Style tab toggle.
+  const showRanges = cfg.showBinRanges;
 
   // ── Chart model — the SDK ColumnChart/LineChart do the theming, legend,
   //    export and empty states; `highchartsOptions` carries the histogram-only
@@ -246,7 +248,7 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({ config, data, 
     }
 
     // ── Daily grouped columns (v1 §8.3: one series per bin, one group/day) ───
-    if (cfg.aggregationMode === 'daily') {
+    if (!viewCumulative) {
       let categories: string[] = [];
       const series: ColumnSeries[] = [];
       const seriesMeta: ClickTarget[] = [];
@@ -373,7 +375,7 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({ config, data, 
       hcOptions,
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cfg, barPoints, drill, sourcePoints, canDrill, style, showRanges, viewLabels, viewLegend]);
+  }, [cfg, barPoints, drill, sourcePoints, canDrill, style, showRanges, viewLabels, viewLegend, viewCumulative]);
 
   // ── Export (v1 §10, alasql replaced with SheetJS/native CSV) ──────────────
 
@@ -392,7 +394,7 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({ config, data, 
         Frequency: c,
       }));
     }
-    if (cfg.aggregationMode === 'daily') {
+    if (!viewCumulative) {
       const rows: Record<string, unknown>[] = [];
       sources.forEach((src, sourceIdx) => {
         const grouping = dailyBinCounts(sourcePoints[sourceIdx] ?? [], src.bins ?? [], cfg.includeStartEnd);
@@ -458,7 +460,7 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({ config, data, 
 
   const canExport = !isLoading && hasAnyData && hasAnyBins;
   // Legend default depends on the mode (daily groups → on; cumulative → off).
-  const legendDefaultOn = cfg.aggregationMode === 'daily';
+  const legendDefaultOn = !viewCumulative;
   const wrapClass = `histogram-widget${style.card.wrapInCard ? '' : ' histogram-widget--bare'}`;
   const wrapStyle: React.CSSProperties = style.card.wrapInCard
     ? {
@@ -524,10 +526,22 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({ config, data, 
             {openMenu === 'settings' && (
               <>
                 <div className="histogram-widget__overlay" onClick={() => setOpenMenu(null)} />
-                <div className="histogram-widget__menu histogram-widget__menu--checks">
-                  <Checkbox label="Data Points" isChecked={viewLabels} onChange={(e) => setViewLabels(e.target.checked)} />
-                  <Checkbox label="Legend" isChecked={viewLegend ?? legendDefaultOn} onChange={(e) => setViewLegend(e.target.checked)} />
-                  <Checkbox label="Bin Ranges" isChecked={showRanges} onChange={(e) => setViewRanges(e.target.checked)} />
+                <div className="histogram-widget__menu histogram-widget__menu--settings">
+                  <span className="histogram-widget__menu-label">Chart Control</span>
+                  <Checkbox label="Legends" isChecked={viewLegend ?? legendDefaultOn} onChange={(e) => setViewLegend(e.target.checked)} />
+                  <Checkbox label="Data Label" isChecked={viewLabels} onChange={(e) => setViewLabels(e.target.checked)} />
+                  <div className="histogram-widget__menu-divider" />
+                  <div className="histogram-widget__setting-row">
+                    <div className="histogram-widget__setting-text">
+                      <span className="histogram-widget__setting-title">Cumulative Values</span>
+                      <span className="histogram-widget__setting-desc">View the total distribution across all value ranges.</span>
+                    </div>
+                    <Switch
+                      isChecked={viewCumulative}
+                      onChange={({ isChecked }: { isChecked: boolean }) => setViewCumulative(isChecked)}
+                      accessibilityLabel="Cumulative values"
+                    />
+                  </div>
                 </div>
               </>
             )}

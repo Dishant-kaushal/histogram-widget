@@ -793,47 +793,16 @@ export function HistogramWidgetConfiguration({
     emit(ui, next);
   }
 
-  const [aggOpen, setAggOpen] = useState(false);
   const totalBins = ui.dataSources.reduce((n, s) => n + s.bins.length, 0);
 
   // ── Data tab ────────────────────────────────────────────────────────────────
   const renderDataTab = () => (
     <div className="hcfg-tab-content">
-      {/* Chart settings — plain section (not an accordion) */}
+      {/* Chart settings — plain section (title + description only, like the
+          Column Chart widget's chart-information section). */}
       <div className="hcfg-plain-section">
         <TextInput label="Chart Title" name="hcfg-chart-title" value={ui.chartTitle} placeholder="Histogram" onChange={({ value }: { value: string }) => patchUi({ chartTitle: value })} />
         <TextInput label="Chart Description" name="hcfg-chart-desc" value={ui.description ?? ''} placeholder="Shown on the widget's info icon" onChange={({ value }: { value: string }) => patchUi({ description: value })} />
-        <TextInput label="Chart Label" name="hcfg-chart-label" value={ui.chartLabel} placeholder="Parameter" onChange={({ value }: { value: string }) => patchUi({ chartLabel: value })} />
-
-        <SelectInput
-          label="Aggregation"
-          name="hcfg-agg"
-          value={ui.aggregationMode === 'daily' ? 'Daily (grouped by weekday)' : 'Cumulative'}
-          isOpen={aggOpen}
-          onClick={() => setAggOpen((o) => !o)}
-        >
-          <DropdownMenu>
-            <ActionListItem
-              title="Cumulative"
-              description="One histogram over the whole time range"
-              selectionType="Single"
-              isSelected={ui.aggregationMode === 'cumulative'}
-              onClick={() => { patchUi({ aggregationMode: 'cumulative' }); setAggOpen(false); }}
-            />
-            <ActionListItem
-              title="Daily (grouped by weekday)"
-              description="One column group per day — use a 1-week range"
-              selectionType="Single"
-              isSelected={ui.aggregationMode === 'daily'}
-              onClick={() => { patchUi({ aggregationMode: 'daily' }); setAggOpen(false); }}
-            />
-          </DropdownMenu>
-        </SelectInput>
-
-        <div className="hcfg-switch-row">
-          <span className="BodySmallRegular">Include Start &amp; End</span>
-          <Switch name="hcfg-include-se" isChecked={ui.includeStartEnd} onChange={({ isChecked }: { isChecked: boolean }) => patchUi({ includeStartEnd: isChecked })} accessibilityLabel="Include start and end" />
-        </div>
       </div>
 
       <ProductAccordionItem
