@@ -132,61 +132,93 @@ function buildDynamicBindingPathList(uiConfig: HistogramUIConfig): BindingEntry[
 }
 
 /**
- * Transform the SDK TimeTabUIConfig into the host DataLayer's `TimeConfig` shape.
- * The host reads `timeConfig` DIRECTLY: `cycleTime.hour` (never null) and a
- * resolved `defaultDuration.{x,xPeriod,xEvent,y,yPeriod,yEvent,navigation}`.
- * (The Column/Line/Pie widgets emit this same shape — a mismatch throws
- * "Cannot read properties of undefined (reading 'hour')" in the query engine.)
+ * Host time contract (view-ai-lens executeQuery → data-layer time-calculator):
+ * the host reads `widgetConfig.timeTabConfig || widgetConfig.timeConfig`, then
+ * builds its query TimeConfig as { timezone, defaultDuration: allDurations.find(
+ * id === defaultDurationId), cycleTime, shifts }. calculateTimeRange() then reads
+ * `cycleTime.hour` and `defaultDuration.{navigation,x,xPeriod,xEvent,y,yPeriod,
+ * yEvent}` UNCONDITIONALLY. So every emitted duration must be fully resolved and
+ * cycleTime must be a non-null object — otherwise the DataLayer query throws
+ * "Cannot read properties of undefined (reading 'hour')" and nothing renders.
  */
-function toHostTimeConfig(t: TimeTabUIConfig): HostTimeConfig {
-  const dur = t.allDurations?.find((d) => d.id === t.defaultDurationId);
-  return {
-    timezone: t.timezone || 'Asia/Kolkata',
-    defaultDuration: toHostDuration(dur, t.defaultPeriodicity),
-    // Cycle start-of-period offset. Zeros are fine for a non-shift widget, but it
-    // MUST be a non-null object — the host does parseInt(cycleTime.hour).
-    cycleTime: { identifier: 'default', hour: '0', minute: '0', dayOfWeek: 0, date: '1', month: 'January', year: '' },
-    shifts: (t.shifts as unknown[]) ?? [],
+
+// SDK-shaped empty cycle time that is also host-safe (parseInt('')||0 → 0).
+// Mirrors the host's own fallback: { identifier:'start', hour:'', minute:'', … }.
+const EMPTY_CYCLE_TIME = {
+  cycleTimeType: 'calendar' as const,
+  identifier: 'start' as const,
+  hour: '',
+  minute: '',
+  dayOfWeek: null,
+  date: '',
+  month: null,
+  year: '',
+};
+
+type SdkPreset = TimeTabUIConfig['allDurations'][number];
+
+/**
+ * Fill in the resolved window fields the host's calculateTimeRange requires.
+ * Calendar presets map to exact anchors (host semantics: start = periodStart(
+ * xPeriod,xEvent) + sign*x, end = periodStart(yPeriod,yEvent) + sign*y,
+ * sign = -1 for 'Previous'). Existing fields on a preset are preserved.
+ */
+function resolveHostPreset(p: SdkPreset): SdkPreset {
+  const d = p as SdkPreset & Record<string, unknown>;
+  if (d.navigation && d.xPeriod && d.xEvent && d.yPeriod && d.yEvent) return p; // already resolved
+  // start:[x, xPeriod, xEvent], end:[y, yPeriod, yEvent] under navigation:'Previous'
+  const CAL: Record<string, [number, string, string, number, string, string]> = {
+    today: [0, 'day', 'start', 0, 'day', 'end'],
+    yesterday: [1, 'day', 'start', 0, 'day', 'start'],
+    current_week: [0, 'week', 'start', 0, 'week', 'end'],
+    previous_week: [1, 'week', 'start', 0, 'week', 'start'],
+    current_month: [0, 'month', 'start', 0, 'month', 'end'],
+    previous_month: [1, 'month', 'start', 0, 'month', 'start'],
   };
+  const cal = d.calendarType ? CAL[d.calendarType as string] : undefined;
+  const [x, xPeriod, xEvent, y, yPeriod, yEvent] = cal ?? [
+    // Relative "Last X <period>" (x/xPeriod already on the preset) → window ends now.
+    typeof d.x === 'number' ? d.x : 24,
+    (d.xPeriod as string) ?? 'hour',
+    'now',
+    0,
+    (d.xPeriod as string) ?? 'hour',
+    'now',
+  ];
+  return {
+    ...p,
+    navigation: (d.navigation as string) ?? 'Previous',
+    x, xPeriod, xEvent, y, yPeriod, yEvent,
+  } as SdkPreset;
 }
 
-/** Map an SDK duration to the host's "last X <period> → now" resolved shape. */
-function toHostDuration(
-  dur: TimeTabUIConfig['allDurations'][number] | undefined,
-  periodicity?: string,
-): HostTimeConfig['defaultDuration'] {
-  const CAL: Record<string, { x: number; period: string }> = {
-    today: { x: 1, period: 'day' },
-    yesterday: { x: 1, period: 'day' },
-    current_week: { x: 7, period: 'day' },
-    previous_week: { x: 7, period: 'day' },
-    current_month: { x: 30, period: 'day' },
-    previous_month: { x: 30, period: 'day' },
-  };
-  const d = dur as
-    | { id?: string; label?: string; x?: number; xPeriod?: string; calendarType?: string; periodicities?: string[] }
-    | undefined;
-  const periodicities = d?.periodicities ?? (periodicity ? [periodicity] : ['hourly']);
-  // Relative durations (last24h, last7d, …) already carry x + xPeriod.
-  if (d && typeof d.x === 'number' && d.xPeriod) {
-    return {
-      id: d.id ?? 'default',
-      label: d.label ?? 'Duration',
-      navigation: 'Previous',
-      x: d.x, xPeriod: d.xPeriod, xEvent: 'now',
-      y: 0, yPeriod: d.xPeriod, yEvent: 'now',
-      periodicities,
-    };
-  }
-  // Calendar presets (today/current_week/…) → approximate to a relative window.
-  const m = (d?.calendarType && CAL[d.calendarType]) || { x: 24, period: 'hour' };
+/**
+ * Normalize the SDK TimeTabUIConfig so the host's preferred read path
+ * (`timeTabConfig`) never hits an undefined cycleTime / unresolved duration.
+ */
+function hostSafeTimeTab(t: TimeTabUIConfig): TimeTabUIConfig {
   return {
-    id: d?.id ?? 'last24h',
-    label: d?.label ?? 'Last 24 Hours',
-    navigation: 'Previous',
-    x: m.x, xPeriod: m.period, xEvent: 'now',
-    y: 0, yPeriod: m.period, yEvent: 'now',
-    periodicities,
+    ...t,
+    timezone: t.timezone || 'Asia/Kolkata',
+    cycleTime: t.cycleTime ?? EMPTY_CYCLE_TIME,
+    shifts: t.shifts ?? [],
+    allDurations: (t.allDurations ?? []).map(resolveHostPreset),
+  } as TimeTabUIConfig;
+}
+
+/** Also emit the DataLayer TimeConfig shape on `timeConfig` (fallback read path). */
+function toHostTimeConfig(t: TimeTabUIConfig): HostTimeConfig {
+  const safe = hostSafeTimeTab(t);
+  const dur = (safe.allDurations ?? []).find((d) => d.id === safe.defaultDurationId) ?? safe.allDurations?.[0];
+  const resolved = (dur ?? resolveHostPreset({ id: 'last24h', label: 'Last 24 Hours', x: 24, xPeriod: 'hour' } as SdkPreset)) as HostTimeConfig['defaultDuration'];
+  if (!resolved.periodicities?.length) {
+    resolved.periodicities = safe.defaultPeriodicity ? [safe.defaultPeriodicity] : ['hourly'];
+  }
+  return {
+    timezone: safe.timezone,
+    defaultDuration: resolved,
+    cycleTime: safe.cycleTime as unknown as HostTimeConfig['cycleTime'],
+    shifts: (safe.shifts as unknown[]) ?? [],
   };
 }
 
@@ -702,7 +734,9 @@ export function HistogramWidgetConfiguration({
   }, [config?._id]);
 
   function emit(nextUi: HistogramUIConfig, nextTime: TimeTabUIConfig | undefined) {
-    const tc = nextTime ?? FALLBACK_TIME_CONFIG;
+    // The host's executeQuery reads `timeTabConfig || timeConfig` — timeTabConfig
+    // WINS, so it must be host-safe too (non-null cycleTime, resolved durations).
+    const tc = hostSafeTimeTab(nextTime ?? FALLBACK_TIME_CONFIG);
     const envelope: HistogramEnvelope = {
       _id: idRef,
       type: 'HistogramWidget',
