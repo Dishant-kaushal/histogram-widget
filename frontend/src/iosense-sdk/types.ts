@@ -146,8 +146,10 @@ export interface HostTimeConfig {
 export interface Bin {
   start: number;
   end: number;
-  binName: string; // '' or '-' → "no name" sentinel; tooltip falls back to "Bin {i}"
-  color: string;
+  /** Optional — the redesigned Bins UI only edits From/To; name falls back to "Bin {i}". */
+  binName?: string;
+  /** Optional — bars are auto-colored from a palette when not set. */
+  color?: string;
 }
 
 /** One named data source: a UNS series topic + its own bin definition. */
@@ -163,8 +165,9 @@ export interface HistogramDataSource {
   /** v1 "Enable Data Source Line Chart" — allow per-bin hour-of-day drill-down for this source. */
   enableLineChart: boolean;
   /** v1 "Automatic Bin Width" — bins auto-generated from a [min,max] range vs manually added. */
-  automaticBinWidth: boolean;
-  bins: Bin[];
+  automaticBinWidth?: boolean;
+  /** @deprecated bins are now chart-level (HistogramUIConfig.bins). Kept optional for back-compat. */
+  bins?: Bin[];
 }
 
 export type HistogramAggregation = 'cumulative' | 'daily';
@@ -203,6 +206,8 @@ export interface HistogramUIConfig {
   description?: string;
   chartLabel: string;
   dataSources: HistogramDataSource[];
+  /** Chart-level bin ranges (From/To), applied to every data source. */
+  bins: Bin[];
   aggregationMode: HistogramAggregation;
   /** v1 "Include Start & End" — count values sitting exactly on a bin's start/end boundary. */
   includeStartEnd: boolean;

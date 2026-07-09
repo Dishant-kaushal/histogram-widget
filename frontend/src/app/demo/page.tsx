@@ -53,8 +53,9 @@ const UI: HistogramUIConfig = {
   showDistributionLine: true,
   showPlotLines: true,
   plotLines: [{ _id: 'p1', name: 'Target', color: '#ff5252', value: 90, lineWidth: 2, dashStyle: 'Dash' }],
+  bins: BINS,
   dataSources: [
-    { _id: 'ds1', name: 'Line A Temp', unsPath: '{{uns:ws1://plant/lineA/temp}}', dataPrecision: 2, enableLineChart: true, automaticBinWidth: true, bins: BINS },
+    { _id: 'ds1', name: 'Line A Temp', unsPath: '{{uns:ws1://plant/lineA/temp}}', dataPrecision: 2, enableLineChart: true },
   ],
   style: {
     size: { preset: 'Large', customWidth: 1400, customHeight: 480 },

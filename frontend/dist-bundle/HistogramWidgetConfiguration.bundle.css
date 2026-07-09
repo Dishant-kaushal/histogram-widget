@@ -180,6 +180,24 @@
   flex-direction: column;
   gap: var(--spacing-02);
 }
+
+/* Bin Range — inline From/To rows */
+.hcfg-bin-rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-03);
+  padding: 0 var(--spacing-04);
+}
+.hcfg-bin-row {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--spacing-03);
+}
+.hcfg-bin-row > *:first-child,
+.hcfg-bin-row > *:nth-child(2) {
+  flex: 1;
+  min-width: 0;
+}
 .hcfg-bin-swatch {
   width: 12px;
   height: 12px;

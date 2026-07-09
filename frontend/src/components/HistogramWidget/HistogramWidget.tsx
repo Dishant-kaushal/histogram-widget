@@ -71,6 +71,7 @@ const DEFAULT_CONFIG: HistogramUIConfig = {
   chartTitle: 'Histogram',
   chartLabel: 'Parameter',
   dataSources: [],
+  bins: [],
   aggregationMode: 'cumulative',
   includeStartEnd: false,
   showBinRanges: false,
@@ -89,6 +90,10 @@ const FONT_WEIGHT_MAP: Record<string, string> = {
   'Semi-Bold': '600',
   Bold: '700',
 };
+
+// Bars are auto-colored from this palette (bins no longer carry a color).
+const BAR_PALETTE = ['#4d79ff', '#7bd88f', '#f0a050', '#f07a7a', '#c77dff', '#4dd0e1', '#85b8ff', '#ffb74d'];
+const binColor = (i: number, override?: string) => override || BAR_PALETTE[i % BAR_PALETTE.length];
 
 interface BarPoint {
   y: number;
@@ -149,6 +154,8 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({ config, data, 
   const [viewCumulative, setViewCumulative] = useState(cfg.aggregationMode !== 'daily');
 
   const sources: HistogramDataSource[] = cfg.dataSources ?? [];
+  // Bins are now chart-level (applied to every source); auto-colored from a palette.
+  const bins: Bin[] = cfg.bins ?? [];
   // `bound` = topic is a resolvable {{...}} binding (what the mini-engine needs).
   const boundSources = sources.filter((s) => TOPIC_REGEX.test((s.unsPath ?? '').trim()));
   // `configured` = the user has added a source with SOME topic. Used for the
@@ -167,11 +174,11 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({ config, data, 
   const barPoints: BarPoint[] = useMemo(() => {
     const pts: BarPoint[] = [];
     sources.forEach((src, sourceIdx) => {
-      const counts = binCounts(sourcePoints[sourceIdx] ?? [], src.bins ?? [], cfg.includeStartEnd);
-      (src.bins ?? []).forEach((bin, binIdx) => {
+      const counts = binCounts(sourcePoints[sourceIdx] ?? [], bins, cfg.includeStartEnd);
+      bins.forEach((bin, binIdx) => {
         pts.push({
           y: counts[binIdx] ?? 0,
-          color: bin.color || '#85B8FF',
+          color: binColor(binIdx, bin.color),
           sourceIdx,
           binIdx,
           bin,
@@ -187,16 +194,15 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({ config, data, 
   // Prefer the explicit flag; only fall back to the (imperfect) empty-data
   // heuristic when the data layer doesn't provide one.
   const isLoading = loading !== undefined ? loading : boundSources.length > 0 && data.length === 0;
-  // A histogram needs bins to draw bars. Bins are configured per source (Data
-  // tab → Bins); a source added without bins would otherwise render a blank chart.
-  const hasAnyBins = sources.some((s) => (s.bins?.length ?? 0) > 0);
+  // A histogram needs bins to draw bars (chart-level Bin Range).
+  const hasAnyBins = bins.length > 0;
   const canDrill = sources.some((s) => s.enableLineChart) || cfg.showLineChart;
 
   const handleBarClick = (sourceIdx: number, binIdx: number) => {
     // v1 "Enable Data Source Line Chart" is per-source; fall back to the global flag.
     if (!(sources[sourceIdx]?.enableLineChart || cfg.showLineChart)) return;
     setDrill({ sourceIdx, binIdx });
-    const bin = sources[sourceIdx]?.bins?.[binIdx];
+    const bin = bins[binIdx];
     onEvent?.({
       type: 'FILTER_CHANGE',
       payload: { drilldown: true, binStart: bin?.start, binEnd: bin?.end, binName: bin?.binName },
@@ -219,21 +225,20 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({ config, data, 
   const model: ChartModel = useMemo(() => {
     // ── Drill-down line chart (v1 §9: 24 hardcoded hour buckets) ─────────────
     if (drill) {
-      const src = sources[drill.sourceIdx];
-      const bin = src?.bins?.[drill.binIdx];
-      const isLast = drill.binIdx === (src?.bins?.length ?? 0) - 1;
+      const bin = bins[drill.binIdx];
+      const isLast = drill.binIdx === bins.length - 1;
       const counts = bin
         ? hourlyCountsForBin(sourcePoints[drill.sourceIdx] ?? [], bin, isLast, cfg.includeStartEnd)
         : new Array<number>(24).fill(0);
       const label = bin
         ? hasBinName(bin.binName)
-          ? bin.binName
+          ? bin.binName!
           : `Bin ${drill.binIdx + 1} (${bin.start} - ${bin.end})`
         : 'Bin';
       return {
         kind: 'line',
         categories: HOUR_CATEGORIES,
-        series: [{ name: label, data: counts, color: bin?.color || '#85B8FF' }],
+        series: [{ name: label, data: counts, color: binColor(drill.binIdx, bin?.color) }],
         xAxisTitle: 'Hour of Day',
         hcOptions: {
           xAxis: { labels: { rotation: -45 } },
@@ -253,16 +258,16 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({ config, data, 
       const series: ColumnSeries[] = [];
       const seriesMeta: ClickTarget[] = [];
       sources.forEach((src, sourceIdx) => {
-        const grouping = dailyBinCounts(sourcePoints[sourceIdx] ?? [], src.bins ?? [], cfg.includeStartEnd);
+        const grouping = dailyBinCounts(sourcePoints[sourceIdx] ?? [], bins, cfg.includeStartEnd);
         if (grouping.categories.length > categories.length) categories = grouping.categories;
-        (src.bins ?? []).forEach((bin, binIdx) => {
+        bins.forEach((bin, binIdx) => {
           const name = hasBinName(bin.binName)
-            ? bin.binName
+            ? bin.binName!
             : `Bin ${binIdx + 1}${showRanges ? ` (${bin.start} - ${bin.end})` : ''}`;
           series.push({
             name: sources.length > 1 ? `${src.name || `Source ${sourceIdx + 1}`}: ${name}` : name,
             data: grouping.perBin[binIdx] ?? [],
-            color: bin.color || '#85B8FF',
+            color: binColor(binIdx, bin.color),
           });
           seriesMeta.push({ sourceIdx, binIdx });
         });
@@ -381,10 +386,9 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({ config, data, 
 
   function buildExportRows(): Record<string, unknown>[] {
     if (drill) {
-      const src = sources[drill.sourceIdx];
-      const bin = src?.bins?.[drill.binIdx];
+      const bin = bins[drill.binIdx];
       if (!bin) return [];
-      const isLast = drill.binIdx === (src.bins?.length ?? 0) - 1;
+      const isLast = drill.binIdx === bins.length - 1;
       const counts = hourlyCountsForBin(sourcePoints[drill.sourceIdx] ?? [], bin, isLast, cfg.includeStartEnd);
       return counts.map((c, h) => ({
         Hour: HOUR_CATEGORIES[h],
@@ -397,8 +401,8 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({ config, data, 
     if (!viewCumulative) {
       const rows: Record<string, unknown>[] = [];
       sources.forEach((src, sourceIdx) => {
-        const grouping = dailyBinCounts(sourcePoints[sourceIdx] ?? [], src.bins ?? [], cfg.includeStartEnd);
-        (src.bins ?? []).forEach((bin, binIdx) => {
+        const grouping = dailyBinCounts(sourcePoints[sourceIdx] ?? [], bins, cfg.includeStartEnd);
+        bins.forEach((bin, binIdx) => {
           grouping.categories.forEach((day, dayIdx) => {
             rows.push({
               'Data Source': src.name || `Source ${sourceIdx + 1}`,
@@ -482,7 +486,8 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({ config, data, 
 
   // Diagnostic — surfaces why the widget may show an empty state in the host.
   console.log('[HistogramWidget] render', {
-    sources: sources.map((s) => ({ name: s.name, unsPath: s.unsPath, bins: s.bins?.length ?? 0 })),
+    sources: sources.map((s) => ({ name: s.name, unsPath: s.unsPath })),
+    bins: bins.length,
     boundCount: boundSources.length,
     dataKeys: data.map((d) => d.key),
     hasConfiguredSource,
