@@ -297,7 +297,36 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({ config, data, 
     // ── Cumulative histogram (v1 §8.1) ──────────────────────────────────────
     const categories = barPoints.map((p) => binLabel(p.bin, p.binIdx, showRanges));
     const manyBins = barPoints.length > 10;
+    // Named distribution lines (Figma list) take precedence; fall back to the
+    // legacy single overlay styled by style.distribution.
+    const distLines = cfg.distributionLines ?? [];
     const overlay = cfg.showDistributionLine ? gaussianOverlayPoints(barPoints.map((p) => p.y)) : [];
+    const distSeries: Highcharts.SeriesOptionsType[] =
+      overlay.length === 0
+        ? []
+        : distLines.length > 0
+          ? distLines.map((dl) => ({
+              type: 'spline',
+              name: dl.name || 'Frequency Distribution',
+              data: overlay,
+              color: dl.color || '#FF6B6B',
+              lineWidth: dl.lineWidth || 3,
+              dashStyle: (dl.dashStyle || 'Solid') as Highcharts.DashStyleValue,
+              marker: { enabled: false },
+              zIndex: 5,
+            }))
+          : [
+              {
+                type: 'spline',
+                name: 'Frequency Distribution',
+                data: overlay,
+                color: style.distribution.color || '#FF6B6B',
+                lineWidth: style.distribution.width || 3,
+                dashStyle: (style.distribution.dashStyle || 'Solid') as Highcharts.DashStyleValue,
+                marker: { enabled: false },
+                zIndex: 5,
+              },
+            ];
 
     const hcOptions: Highcharts.Options = {
       // colorByPoint + colors → one color per bin (index-aligned to barPoints).
@@ -346,24 +375,10 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({ config, data, 
           return `<b>Bin ${n}</b> : ${this.y}`;
         },
       },
-      // Distribution overlay as a 2nd (spline) series, merged in by index so the
-      // computed column series at index 0 is preserved.
-      ...(overlay.length > 0
-        ? {
-            series: [
-              {},
-              {
-                type: 'spline',
-                name: 'Frequency Distribution',
-                data: overlay,
-                color: style.distribution.color || '#FF6B6B',
-                lineWidth: style.distribution.width || 3,
-                dashStyle: (style.distribution.dashStyle || 'Solid') as Highcharts.DashStyleValue,
-                marker: { enabled: false },
-                zIndex: 5,
-              },
-            ] as unknown as Highcharts.SeriesOptionsType[],
-          }
+      // Distribution overlay spline(s), merged in by index so the computed column
+      // series at index 0 is preserved.
+      ...(distSeries.length > 0
+        ? { series: [{}, ...distSeries] as unknown as Highcharts.SeriesOptionsType[] }
         : {}),
     };
 

@@ -29,8 +29,10 @@ import type {
   Bin,
   BindingEntry,
   HistogramDataSource,
+  HistogramDistributionLine,
   HistogramEnvelope,
   HistogramPlotLine,
+  PlotLineValueType,
   HistogramStyling,
   HistogramUIConfig,
   HostTimeConfig,
@@ -81,6 +83,8 @@ const DEFAULT_UI_CONFIG: HistogramUIConfig = {
   dataSources: [],
   bins: [],
   rightAxes: [],
+  leftAxisName: 'Left',
+  distributionLines: [],
   aggregationMode: 'cumulative',
   includeStartEnd: false,
   showBinRanges: false,
@@ -349,6 +353,91 @@ function AxisForm({
           )}
         </DropdownMenu>
       </SelectInput>
+    </div>
+  );
+}
+
+// ─── Add/Edit Plotline form (popup) ──────────────────────────────────────────
+
+function PlotLineForm({
+  initial,
+  onSubmit,
+  onReady,
+}: {
+  initial: HistogramPlotLine | null;
+  onSubmit: (pl: Omit<HistogramPlotLine, '_id'>) => void;
+  onReady: (b: EditorBinding) => void;
+}) {
+  const [name, setName] = useState(initial?.name ?? 'Value');
+  const [color, setColor] = useState(initial?.color ?? '#FF0000');
+  const [valueType, setValueType] = useState<PlotLineValueType>(initial?.valueType ?? 'Fixed');
+  const [vtOpen, setVtOpen] = useState(false);
+  const [value, setValue] = useState(initial ? String(initial.value) : '0');
+  const [lineWidth, setLineWidth] = useState(initial ? String(initial.lineWidth) : '2');
+  const [dashStyle, setDashStyle] = useState<string>(initial?.dashStyle ?? 'Solid');
+
+  const isValid = name.trim() !== '';
+  const submit = useCallback(() => {
+    if (!isValid) return;
+    onSubmit({ name: name.trim(), color, valueType, value: num(value), lineWidth: num(lineWidth, 2), dashStyle });
+  }, [isValid, name, color, valueType, value, lineWidth, dashStyle, onSubmit]);
+  useEditorBinding(isValid, submit, onReady);
+
+  return (
+    <div className="hcfg-editor">
+      <TextInput label="Name" necessityIndicator="required" placeholder="Enter line name" value={name} onChange={({ value: v }: { value: string }) => setName(v)} />
+      <ColorInput label="Color" placeholder="Select color" value={color} onChange={(v: string) => setColor(v)} />
+      <SelectInput label="Value Type" value={valueType} isOpen={vtOpen} onClick={() => setVtOpen((o) => !o)}>
+        <DropdownMenu>
+          {(['Fixed', 'Dynamic'] as PlotLineValueType[]).map((t) => (
+            <ActionListItem key={t} title={t} selectionType="Single" isSelected={valueType === t} onClick={() => { setValueType(t); setVtOpen(false); }} />
+          ))}
+        </DropdownMenu>
+      </SelectInput>
+      {valueType === 'Fixed' && (
+        <TextInput label="Value" type="number" placeholder="Enter value" value={value} onChange={({ value: v }: { value: string }) => setValue(v)} />
+      )}
+      <span className="hcfg-style-block__title LabelMediumSemibold">Style</span>
+      <div className="hcfg-row">
+        <TextInput label="Line Width" type="number" placeholder="Enter width" value={lineWidth} onChange={({ value: v }: { value: string }) => setLineWidth(v)} />
+        <StyleSelect label="Line Style" value={dashStyle} options={DASH_STYLES} onSelect={(v) => setDashStyle(v)} />
+      </div>
+    </div>
+  );
+}
+
+// ─── Add/Edit Distribution Line form (popup) ─────────────────────────────────
+
+function DistributionLineForm({
+  initial,
+  onSubmit,
+  onReady,
+}: {
+  initial: HistogramDistributionLine | null;
+  onSubmit: (dl: Omit<HistogramDistributionLine, '_id'>) => void;
+  onReady: (b: EditorBinding) => void;
+}) {
+  const [name, setName] = useState(initial?.name ?? 'Line 1');
+  const [color, setColor] = useState(initial?.color ?? '#FF6B6B');
+  const [lineWidth, setLineWidth] = useState(initial ? String(initial.lineWidth) : '3');
+  const [dashStyle, setDashStyle] = useState<string>(initial?.dashStyle ?? 'Solid');
+
+  const isValid = name.trim() !== '';
+  const submit = useCallback(() => {
+    if (!isValid) return;
+    onSubmit({ name: name.trim(), color, lineWidth: num(lineWidth, 3), dashStyle });
+  }, [isValid, name, color, lineWidth, dashStyle, onSubmit]);
+  useEditorBinding(isValid, submit, onReady);
+
+  return (
+    <div className="hcfg-editor">
+      <TextInput label="Name" necessityIndicator="required" placeholder="Enter line name" value={name} onChange={({ value: v }: { value: string }) => setName(v)} />
+      <ColorInput label="Color" placeholder="Select color" value={color} onChange={(v: string) => setColor(v)} />
+      <span className="hcfg-style-block__title LabelMediumSemibold">Style</span>
+      <div className="hcfg-row">
+        <TextInput label="Line Width" type="number" placeholder="Enter width" value={lineWidth} onChange={({ value: v }: { value: string }) => setLineWidth(v)} />
+        <StyleSelect label="Line Style" value={dashStyle} options={DASH_STYLES} onSelect={(v) => setDashStyle(v)} />
+      </div>
     </div>
   );
 }
@@ -678,14 +767,21 @@ export function HistogramWidgetConfiguration({
   const [srcPanel, setSrcPanel] = useState<{ mode: 'add' } | { mode: 'edit'; index: number } | null>(null);
   const [editorBinding, setEditorBinding] = useState<EditorBinding | null>(null);
   const [modalAnchor, setModalAnchor] = useState<{ x: number; y: number }>({ x: 360, y: 120 });
-  const [dsExpanded, setDsExpanded] = useState(true);
-  const [axisExpanded, setAxisExpanded] = useState(true);
-  const [binsExpanded, setBinsExpanded] = useState(true);
+  // All accordions start collapsed.
+  const [dsExpanded, setDsExpanded] = useState(false);
+  const [axisExpanded, setAxisExpanded] = useState(false);
+  const [binsExpanded, setBinsExpanded] = useState(false);
   const [plotExpanded, setPlotExpanded] = useState(false);
   const [distExpanded, setDistExpanded] = useState(false);
-  // Add Right Axis popup.
-  const [axisPanelOpen, setAxisPanelOpen] = useState(false);
+  // Axis popup: 'add' = add right axis, 'editLeft' = rename Left axis.
+  const [axisPanel, setAxisPanel] = useState<'add' | 'editLeft' | null>(null);
   const [axisEditorBinding, setAxisEditorBinding] = useState<EditorBinding | null>(null);
+  const [leftNameDraft, setLeftNameDraft] = useState('');
+  // Plot Line / Distribution Line popups: null closed, 'add', or edit index.
+  const [plotPanel, setPlotPanel] = useState<'add' | number | null>(null);
+  const [plotEditorBinding, setPlotEditorBinding] = useState<EditorBinding | null>(null);
+  const [distPanel, setDistPanel] = useState<'add' | number | null>(null);
+  const [distEditorBinding, setDistEditorBinding] = useState<EditorBinding | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
 
   // Position a side popup beside the config panel; clamp so it's always fully
@@ -744,11 +840,6 @@ export function HistogramWidgetConfiguration({
     setUi(next);
     emit(next, timeTabConfig);
   };
-  const patchPlotLine = (i: number, patch: Partial<HistogramPlotLine>) =>
-    patchUi({ plotLines: ui.plotLines.map((p, idx) => (idx === i ? { ...p, ...patch } : p)) });
-  const patchDistribution = (patch: Partial<HistogramStyling['distribution']>) =>
-    patchUi({ style: { ...ui.style, distribution: { ...ui.style.distribution, ...patch } } });
-
   // ── Axis (left is implicit; right axes are user-added) ──
   const rightAxes = ui.rightAxes ?? [];
   const assignedSourceIds = new Set(rightAxes.flatMap((a) => a.dataSourceIds));
@@ -756,11 +847,37 @@ export function HistogramWidgetConfiguration({
   const availableForRightAxis = ui.dataSources.filter((s) => !assignedSourceIds.has(s._id));
   const submitRightAxis = (axis: { name: string; dataSourceIds: string[] }) => {
     patchUi({ rightAxes: [...rightAxes, { _id: `axis_${Date.now()}`, ...axis }] });
-    setAxisPanelOpen(false);
+    setAxisPanel(null);
     setAxisEditorBinding(null);
   };
   const deleteRightAxis = (id: string) =>
     patchUi({ rightAxes: rightAxes.filter((a) => a._id !== id) });
+  const openAddRightAxis = () => { setModalAnchor(computeModalAnchor()); setAxisEditorBinding(null); setAxisPanel('add'); };
+  const openEditLeftAxis = () => { setLeftNameDraft(ui.leftAxisName ?? 'Left'); setModalAnchor(computeModalAnchor()); setAxisPanel('editLeft'); };
+
+  // ── Plot Line / Distribution Line (list + popup) ──
+  const plotLines = ui.plotLines ?? [];
+  const distributionLines = ui.distributionLines ?? [];
+  const openPlotPanel = (p: 'add' | number) => { setModalAnchor(computeModalAnchor()); setPlotEditorBinding(null); setPlotPanel(p); };
+  const submitPlotLine = (pl: Omit<HistogramPlotLine, '_id'>) => {
+    const list = typeof plotPanel === 'number'
+      ? plotLines.map((p, i) => (i === plotPanel ? { ...p, ...pl } : p))
+      : [...plotLines, { _id: `pl_${Date.now()}`, ...pl }];
+    patchUi({ plotLines: list, showPlotLines: true });
+    setPlotPanel(null);
+    setPlotEditorBinding(null);
+  };
+  const deletePlotLine = (id: string) => patchUi({ plotLines: plotLines.filter((p) => p._id !== id) });
+  const openDistPanel = (p: 'add' | number) => { setModalAnchor(computeModalAnchor()); setDistEditorBinding(null); setDistPanel(p); };
+  const submitDistLine = (dl: Omit<HistogramDistributionLine, '_id'>) => {
+    const list = typeof distPanel === 'number'
+      ? distributionLines.map((d, i) => (i === distPanel ? { ...d, ...dl } : d))
+      : [...distributionLines, { _id: `dl_${Date.now()}`, ...dl }];
+    patchUi({ distributionLines: list, showDistributionLine: true });
+    setDistPanel(null);
+    setDistEditorBinding(null);
+  };
+  const deleteDistLine = (id: string) => patchUi({ distributionLines: distributionLines.filter((d) => d._id !== id) });
 
   function handleTimeConfigChange(next: TimeTabUIConfig) {
     setTimeTabConfig(next);
@@ -838,12 +955,7 @@ export function HistogramWidgetConfiguration({
               small
               icon={<Plus size={16} />}
               label="Add right axis"
-              onClick={() => {
-                if (!axisExpanded) setAxisExpanded(true);
-                setModalAnchor(computeModalAnchor());
-                setAxisEditorBinding(null);
-                setAxisPanelOpen(true);
-              }}
+              onClick={() => { if (!axisExpanded) setAxisExpanded(true); openAddRightAxis(); }}
             />
           ) : undefined
         }
@@ -853,7 +965,15 @@ export function HistogramWidgetConfiguration({
             <p className="hcfg-axis-hint BodyXSmallRegular">
               <Info size={13} /> Left axis is used by default. Add a right axis for different values.
             </p>
-            <ListCard title="Axis" subtitle={`Left · ${leftSourceCount} Data Source${leftSourceCount === 1 ? '' : 's'}`} />
+            <ListCard
+              title={ui.leftAxisName || 'Left'}
+              subtitle={`Left · ${leftSourceCount} Data Source${leftSourceCount === 1 ? '' : 's'}`}
+              trailingItems={
+                <div className="hcfg-ds-actions">
+                  <IconAction icon={<Edit2 size={14} />} label="Edit left axis" onClick={openEditLeftAxis} />
+                </div>
+              }
+            />
             {rightAxes.map((a) => (
               <ListCard
                 key={a._id}
@@ -886,56 +1006,64 @@ export function HistogramWidgetConfiguration({
         )}
       </ProductAccordionItem>
 
-      {/* Plot Line accordion */}
-      <ProductAccordionItem title="Plot Line" isExpanded={plotExpanded} onToggle={() => setPlotExpanded((v) => !v)}>
+      {/* Plot Line — list + Add Plotline popup (Figma). */}
+      <ProductAccordionItem
+        title="Plot Line"
+        trailingIcon={plotLines.length > 0 ? <span className="hcfg-ds-count BodyXSmallMedium">{plotLines.length}</span> : undefined}
+        isExpanded={plotExpanded}
+        onToggle={() => setPlotExpanded((v) => !v)}
+        headerAction={<IconAction small icon={<Plus size={16} />} label="Add plotline" onClick={() => { if (!plotExpanded) setPlotExpanded(true); openPlotPanel('add'); }} />}
+      >
         {plotExpanded && (
           <div className="hcfg-accordion-body">
-            <div className="hcfg-switch-row">
-              <span className="BodySmallRegular">Show Plot Lines</span>
-              <Switch isChecked={ui.showPlotLines} onChange={({ isChecked }: { isChecked: boolean }) => patchUi({ showPlotLines: isChecked })} accessibilityLabel="Show plot lines" />
-            </div>
-            {ui.showPlotLines && (
-              <div className="hcfg-entry">
-                {ui.plotLines.map((pl, i) => (
-                  <div key={pl._id} className="hcfg-bin-item">
-                    <div className="hcfg-bin-item__head">
-                      <span className="hcfg-bin-item__num BodyXSmallRegular">Line {i + 1}</span>
-                      <span className="hcfg-bin-item__swatch" style={{ backgroundColor: pl.color }} />
-                      <Button variant="Secondary" color="Negative" size="XSmall" label="✕" onClick={() => patchUi({ plotLines: ui.plotLines.filter((_, idx) => idx !== i) })} />
+            {plotLines.length === 0 ? (
+              <p className="hcfg-field-label BodyXSmallRegular">No plot lines yet. Click + to add one.</p>
+            ) : (
+              plotLines.map((pl, i) => (
+                <ListCard
+                  key={pl._id}
+                  title={pl.name || `Plotline ${i + 1}`}
+                  subtitle={`Type: ${pl.valueType ?? 'Fixed'}`}
+                  leadingItem={<span className="hcfg-bin-swatch" style={{ background: pl.color }} />}
+                  trailingItems={
+                    <div className="hcfg-ds-actions">
+                      <IconAction icon={<Edit2 size={14} />} label="Edit plotline" onClick={() => openPlotPanel(i)} />
+                      <IconAction icon={<Trash2 size={14} />} label="Delete plotline" onClick={() => deletePlotLine(pl._id)} />
                     </div>
-                    <div className="hcfg-row">
-                      <TextInput label="Value" value={String(pl.value)} onChange={({ value: v }: { value: string }) => patchPlotLine(i, { value: num(v) })} />
-                      <TextInput label="Width" value={String(pl.lineWidth)} onChange={({ value: v }: { value: string }) => patchPlotLine(i, { lineWidth: num(v, 2) })} />
-                    </div>
-                    <TextInput label="Label" value={pl.name} onChange={({ value: v }: { value: string }) => patchPlotLine(i, { name: v })} />
-                    <ColorInput label="Color" placeholder="Select color" value={pl.color} onChange={(v: string) => patchPlotLine(i, { color: v })} />
-                  </div>
-                ))}
-                <div className="hcfg-add-row">
-                  <Button variant="Gray" size="Small" leadingIcon={<Plus size={14} />} label="Add Plot Line" onClick={() => patchUi({ plotLines: [...ui.plotLines, { _id: `pl_${Date.now()}`, name: '', color: '#FF0000', value: 0, lineWidth: 2, dashStyle: 'Solid' }] })} />
-                </div>
-              </div>
+                  }
+                />
+              ))
             )}
           </div>
         )}
       </ProductAccordionItem>
 
-      {/* Distribution Line accordion */}
-      <ProductAccordionItem title="Distribution Line" isExpanded={distExpanded} onToggle={() => setDistExpanded((v) => !v)}>
+      {/* Distribution Line — list + popup (Figma). */}
+      <ProductAccordionItem
+        title="Distribution Line"
+        trailingIcon={distributionLines.length > 0 ? <span className="hcfg-ds-count BodyXSmallMedium">{distributionLines.length}</span> : undefined}
+        isExpanded={distExpanded}
+        onToggle={() => setDistExpanded((v) => !v)}
+        headerAction={<IconAction small icon={<Plus size={16} />} label="Add distribution line" onClick={() => { if (!distExpanded) setDistExpanded(true); openDistPanel('add'); }} />}
+      >
         {distExpanded && (
           <div className="hcfg-accordion-body">
-            <div className="hcfg-switch-row">
-              <span className="BodySmallRegular">Show Distribution Line</span>
-              <Switch isChecked={ui.showDistributionLine} onChange={({ isChecked }: { isChecked: boolean }) => patchUi({ showDistributionLine: isChecked })} accessibilityLabel="Show distribution line" />
-            </div>
-            {ui.showDistributionLine && (
-              <div className="hcfg-entry">
-                <ColorInput label="Line Color" placeholder="Select color" value={ui.style.distribution.color} onChange={(v: string) => patchDistribution({ color: v })} />
-                <div className="hcfg-row">
-                  <TextInput label="Line Width" type="number" value={String(ui.style.distribution.width)} onChange={({ value: v }: { value: string }) => patchDistribution({ width: num(v, 3) })} />
-                  <StyleSelect label="Dash Style" value={ui.style.distribution.dashStyle} options={DASH_STYLES} onSelect={(v) => patchDistribution({ dashStyle: v })} />
-                </div>
-              </div>
+            {distributionLines.length === 0 ? (
+              <p className="hcfg-field-label BodyXSmallRegular">No distribution lines yet. Click + to add one.</p>
+            ) : (
+              distributionLines.map((dl, i) => (
+                <ListCard
+                  key={dl._id}
+                  title={dl.name || `Line ${i + 1}`}
+                  leadingItem={<span className="hcfg-bin-swatch" style={{ background: dl.color }} />}
+                  trailingItems={
+                    <div className="hcfg-ds-actions">
+                      <IconAction icon={<Edit2 size={14} />} label="Edit distribution line" onClick={() => openDistPanel(i)} />
+                      <IconAction icon={<Trash2 size={14} />} label="Delete distribution line" onClick={() => deleteDistLine(dl._id)} />
+                    </div>
+                  }
+                />
+              ))
             )}
           </div>
         )}
@@ -1024,14 +1152,14 @@ export function HistogramWidgetConfiguration({
         </Modal>
       )}
 
-      {axisPanelOpen && (
+      {axisPanel === 'add' && (
         <Modal
           isOpen
-          onClose={() => setAxisPanelOpen(false)}
+          onClose={() => setAxisPanel(null)}
           positionX={modalAnchor.x}
           positionY={modalAnchor.y}
           className="hcfg-side-modal"
-          header={<ModalHeader title="Add Right Axis" onClose={() => setAxisPanelOpen(false)} />}
+          header={<ModalHeader title="Add Right Axis" onClose={() => setAxisPanel(null)} />}
           footer={
             <ModalFooter
               primaryAction={
@@ -1044,7 +1172,7 @@ export function HistogramWidgetConfiguration({
                   onClick={() => { if (axisEditorBinding?.isValid) axisEditorBinding.submit(); }}
                 />
               }
-              secondaryAction={<Button variant="Secondary" size="Small" isFullWidth label="Cancel" onClick={() => setAxisPanelOpen(false)} />}
+              secondaryAction={<Button variant="Secondary" size="Small" isFullWidth label="Cancel" onClick={() => setAxisPanel(null)} />}
             />
           }
         >
@@ -1054,6 +1182,113 @@ export function HistogramWidgetConfiguration({
               availableSources={availableForRightAxis}
               onSubmit={submitRightAxis}
               onReady={setAxisEditorBinding}
+            />
+          </ModalBody>
+        </Modal>
+      )}
+
+      {axisPanel === 'editLeft' && (
+        <Modal
+          isOpen
+          onClose={() => setAxisPanel(null)}
+          positionX={modalAnchor.x}
+          positionY={modalAnchor.y}
+          className="hcfg-side-modal"
+          header={<ModalHeader title="Edit Left Axis" onClose={() => setAxisPanel(null)} />}
+          footer={
+            <ModalFooter
+              primaryAction={
+                <Button
+                  variant="Primary"
+                  size="Small"
+                  isFullWidth
+                  label="Save"
+                  isDisabled={leftNameDraft.trim() === ''}
+                  onClick={() => { patchUi({ leftAxisName: leftNameDraft.trim() }); setAxisPanel(null); }}
+                />
+              }
+              secondaryAction={<Button variant="Secondary" size="Small" isFullWidth label="Cancel" onClick={() => setAxisPanel(null)} />}
+            />
+          }
+        >
+          <ModalBody>
+            <div className="hcfg-editor">
+              <TextInput
+                label="Name"
+                necessityIndicator="required"
+                value={leftNameDraft}
+                onChange={({ value }: { value: string }) => setLeftNameDraft(value)}
+              />
+            </div>
+          </ModalBody>
+        </Modal>
+      )}
+
+      {plotPanel !== null && (
+        <Modal
+          isOpen
+          onClose={() => setPlotPanel(null)}
+          positionX={modalAnchor.x}
+          positionY={modalAnchor.y}
+          className="hcfg-side-modal"
+          header={<ModalHeader title={typeof plotPanel === 'number' ? 'Edit Plotline' : 'Add Plotline'} onClose={() => setPlotPanel(null)} />}
+          footer={
+            <ModalFooter
+              primaryAction={
+                <Button
+                  variant="Primary"
+                  size="Small"
+                  isFullWidth
+                  label={typeof plotPanel === 'number' ? 'Save' : 'Add Plotline'}
+                  isDisabled={!plotEditorBinding || !plotEditorBinding.isValid}
+                  onClick={() => { if (plotEditorBinding?.isValid) plotEditorBinding.submit(); }}
+                />
+              }
+              secondaryAction={<Button variant="Secondary" size="Small" isFullWidth label="Cancel" onClick={() => setPlotPanel(null)} />}
+            />
+          }
+        >
+          <ModalBody>
+            <PlotLineForm
+              key={typeof plotPanel === 'number' ? plotLines[plotPanel]?._id ?? 'edit' : 'new'}
+              initial={typeof plotPanel === 'number' ? plotLines[plotPanel] ?? null : null}
+              onSubmit={submitPlotLine}
+              onReady={setPlotEditorBinding}
+            />
+          </ModalBody>
+        </Modal>
+      )}
+
+      {distPanel !== null && (
+        <Modal
+          isOpen
+          onClose={() => setDistPanel(null)}
+          positionX={modalAnchor.x}
+          positionY={modalAnchor.y}
+          className="hcfg-side-modal"
+          header={<ModalHeader title={typeof distPanel === 'number' ? 'Edit Distribution Line' : 'Add Distribution Line'} onClose={() => setDistPanel(null)} />}
+          footer={
+            <ModalFooter
+              primaryAction={
+                <Button
+                  variant="Primary"
+                  size="Small"
+                  isFullWidth
+                  label={typeof distPanel === 'number' ? 'Save' : 'Add Line'}
+                  isDisabled={!distEditorBinding || !distEditorBinding.isValid}
+                  onClick={() => { if (distEditorBinding?.isValid) distEditorBinding.submit(); }}
+                />
+              }
+              secondaryAction={<Button variant="Secondary" size="Small" isFullWidth label="Cancel" onClick={() => setDistPanel(null)} />}
+            />
+          }
+        >
+          <ModalBody>
+            <DistributionLineForm
+              key={typeof distPanel === 'number' ? distributionLines[distPanel]?._id ?? 'edit' : 'new'}
+              initial={typeof distPanel === 'number' ? distributionLines[distPanel] ?? null : null}
+              onSubmit={submitDistLine}
+              onReady={setDistEditorBinding}
             />
           </ModalBody>
         </Modal>

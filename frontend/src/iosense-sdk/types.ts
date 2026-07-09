@@ -181,11 +181,24 @@ export interface HistogramRightAxis {
   dataSourceIds: string[];
 }
 
+export type PlotLineValueType = 'Fixed' | 'Dynamic';
+
 export interface HistogramPlotLine {
   _id: string;
   name: string;
   color: string;
+  /** Fixed = a static y value; Dynamic = derived from data (e.g. mean). */
+  valueType?: PlotLineValueType;
   value: number;
+  lineWidth: number;
+  dashStyle: string;
+}
+
+/** A styled normal-distribution overlay line (Figma "Distribution Line" list). */
+export interface HistogramDistributionLine {
+  _id: string;
+  name: string;
+  color: string;
   lineWidth: number;
   dashStyle: string;
 }
@@ -219,6 +232,10 @@ export interface HistogramUIConfig {
   bins: Bin[];
   /** User-added right y-axes; Left is implicit and holds unassigned sources. */
   rightAxes?: HistogramRightAxis[];
+  /** Editable name of the default Left axis. */
+  leftAxisName?: string;
+  /** Named distribution overlay lines (Figma "Distribution Line" list). */
+  distributionLines?: HistogramDistributionLine[];
   aggregationMode: HistogramAggregation;
   /** v1 "Include Start & End" — count values sitting exactly on a bin's start/end boundary. */
   includeStartEnd: boolean;
