@@ -439,13 +439,11 @@ function StylingSection({
   ui,
   onChange,
   onPatchUi,
-  onPatchPlotLine,
 }: {
   value: HistogramStyling;
   ui: HistogramUIConfig;
   onChange: (next: HistogramStyling) => void;
   onPatchUi: (patch: Partial<HistogramUIConfig>) => void;
-  onPatchPlotLine: (i: number, patch: Partial<HistogramPlotLine>) => void;
 }) {
   const [sizeOpen, setSizeOpen] = useState(false);
   const selectedSize = WIDGET_SIZES.find((s) => s.value === value.size.preset) ?? WIDGET_SIZES[1];
@@ -485,50 +483,12 @@ function StylingSection({
 
       <Divider />
 
-      {/* Display toggles (v1 Chart Customization) */}
-      <div className="hcfg-switch-row">
-        <span className="LabelMediumRegular">Show Plot Lines</span>
-        <Switch isChecked={ui.showPlotLines} onChange={({ isChecked }: { isChecked: boolean }) => onPatchUi({ showPlotLines: isChecked })} accessibilityLabel="Show plot lines" />
-      </div>
-      {ui.showPlotLines && (
-        <div className="hcfg-entry">
-          {ui.plotLines.map((pl, i) => (
-            <div key={pl._id} className="hcfg-bin-item">
-              <div className="hcfg-bin-item__head">
-                <span className="hcfg-bin-item__num BodyXSmallRegular">Line {i + 1}</span>
-                <span className="hcfg-bin-item__swatch" style={{ backgroundColor: pl.color }} />
-                <Button variant="Secondary" color="Negative" size="XSmall" label="✕" onClick={() => onPatchUi({ plotLines: ui.plotLines.filter((_, idx) => idx !== i) })} />
-              </div>
-              <div className="hcfg-row">
-                <TextInput label="Value" value={String(pl.value)} onChange={({ value: v }: { value: string }) => onPatchPlotLine(i, { value: num(v) })} />
-                <TextInput label="Width" value={String(pl.lineWidth)} onChange={({ value: v }: { value: string }) => onPatchPlotLine(i, { lineWidth: num(v, 2) })} />
-              </div>
-              <TextInput label="Label" value={pl.name} onChange={({ value: v }: { value: string }) => onPatchPlotLine(i, { name: v })} />
-              <ColorInput label="Color" placeholder="Select color" value={pl.color} onChange={(v: string) => onPatchPlotLine(i, { color: v })} />
-            </div>
-          ))}
-          <div className="hcfg-add-row">
-            <Button variant="Gray" size="Small" label="+ Add plot line" onClick={() => onPatchUi({ plotLines: [...ui.plotLines, { _id: `pl_${Date.now()}`, name: '', color: '#FF0000', value: 0, lineWidth: 2, dashStyle: 'Solid' }] })} />
-          </div>
-        </div>
-      )}
+      {/* Plot Line and Distribution Line moved to the Data tab (dedicated
+          accordions). Bin-range labels remain a Style toggle. */}
       <div className="hcfg-switch-row">
         <span className="LabelMediumRegular">Show Bin Ranges</span>
         <Switch isChecked={ui.showBinRanges} onChange={({ isChecked }: { isChecked: boolean }) => onPatchUi({ showBinRanges: isChecked })} accessibilityLabel="Show bin ranges" />
       </div>
-      <div className="hcfg-switch-row">
-        <span className="LabelMediumRegular">Show Distribution Line</span>
-        <Switch isChecked={ui.showDistributionLine} onChange={({ isChecked }: { isChecked: boolean }) => onPatchUi({ showDistributionLine: isChecked })} accessibilityLabel="Show distribution line" />
-      </div>
-      {ui.showDistributionLine && (
-        <div className="hcfg-entry">
-          <ColorInput label="Distribution Line Color" placeholder="Select color" value={value.distribution.color} onChange={(v: string) => update('distribution', { color: v })} />
-          <div className="hcfg-row">
-            <TextInput label="Line Width" type="number" value={String(value.distribution.width)} onChange={({ value: v }: { value: string }) => update('distribution', { width: num(v, 3) })} />
-            <StyleSelect label="Dash Style" value={value.distribution.dashStyle} options={DASH_STYLES} onSelect={(v) => update('distribution', { dashStyle: v })} />
-          </div>
-        </div>
-      )}
 
       <Divider />
 
@@ -655,6 +615,8 @@ export function HistogramWidgetConfiguration({
   const [modalAnchor, setModalAnchor] = useState<{ x: number; y: number }>({ x: 360, y: 120 });
   const [dsExpanded, setDsExpanded] = useState(true);
   const [binsExpanded, setBinsExpanded] = useState(true);
+  const [plotExpanded, setPlotExpanded] = useState(false);
+  const [distExpanded, setDistExpanded] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
 
   // Position a side popup beside the config panel; clamp so it's always fully
@@ -715,6 +677,8 @@ export function HistogramWidgetConfiguration({
   };
   const patchPlotLine = (i: number, patch: Partial<HistogramPlotLine>) =>
     patchUi({ plotLines: ui.plotLines.map((p, idx) => (idx === i ? { ...p, ...patch } : p)) });
+  const patchDistribution = (patch: Partial<HistogramStyling['distribution']>) =>
+    patchUi({ style: { ...ui.style, distribution: { ...ui.style.distribution, ...patch } } });
 
   function handleTimeConfigChange(next: TimeTabUIConfig) {
     setTimeTabConfig(next);
@@ -795,6 +759,61 @@ export function HistogramWidgetConfiguration({
           </div>
         )}
       </ProductAccordionItem>
+
+      {/* Plot Line accordion */}
+      <ProductAccordionItem title="Plot Line" isExpanded={plotExpanded} onToggle={() => setPlotExpanded((v) => !v)}>
+        {plotExpanded && (
+          <div className="hcfg-accordion-body">
+            <div className="hcfg-switch-row">
+              <span className="BodySmallRegular">Show Plot Lines</span>
+              <Switch isChecked={ui.showPlotLines} onChange={({ isChecked }: { isChecked: boolean }) => patchUi({ showPlotLines: isChecked })} accessibilityLabel="Show plot lines" />
+            </div>
+            {ui.showPlotLines && (
+              <div className="hcfg-entry">
+                {ui.plotLines.map((pl, i) => (
+                  <div key={pl._id} className="hcfg-bin-item">
+                    <div className="hcfg-bin-item__head">
+                      <span className="hcfg-bin-item__num BodyXSmallRegular">Line {i + 1}</span>
+                      <span className="hcfg-bin-item__swatch" style={{ backgroundColor: pl.color }} />
+                      <Button variant="Secondary" color="Negative" size="XSmall" label="✕" onClick={() => patchUi({ plotLines: ui.plotLines.filter((_, idx) => idx !== i) })} />
+                    </div>
+                    <div className="hcfg-row">
+                      <TextInput label="Value" value={String(pl.value)} onChange={({ value: v }: { value: string }) => patchPlotLine(i, { value: num(v) })} />
+                      <TextInput label="Width" value={String(pl.lineWidth)} onChange={({ value: v }: { value: string }) => patchPlotLine(i, { lineWidth: num(v, 2) })} />
+                    </div>
+                    <TextInput label="Label" value={pl.name} onChange={({ value: v }: { value: string }) => patchPlotLine(i, { name: v })} />
+                    <ColorInput label="Color" placeholder="Select color" value={pl.color} onChange={(v: string) => patchPlotLine(i, { color: v })} />
+                  </div>
+                ))}
+                <div className="hcfg-add-row">
+                  <Button variant="Gray" size="Small" leadingIcon={<Plus size={14} />} label="Add Plot Line" onClick={() => patchUi({ plotLines: [...ui.plotLines, { _id: `pl_${Date.now()}`, name: '', color: '#FF0000', value: 0, lineWidth: 2, dashStyle: 'Solid' }] })} />
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </ProductAccordionItem>
+
+      {/* Distribution Line accordion */}
+      <ProductAccordionItem title="Distribution Line" isExpanded={distExpanded} onToggle={() => setDistExpanded((v) => !v)}>
+        {distExpanded && (
+          <div className="hcfg-accordion-body">
+            <div className="hcfg-switch-row">
+              <span className="BodySmallRegular">Show Distribution Line</span>
+              <Switch isChecked={ui.showDistributionLine} onChange={({ isChecked }: { isChecked: boolean }) => patchUi({ showDistributionLine: isChecked })} accessibilityLabel="Show distribution line" />
+            </div>
+            {ui.showDistributionLine && (
+              <div className="hcfg-entry">
+                <ColorInput label="Line Color" placeholder="Select color" value={ui.style.distribution.color} onChange={(v: string) => patchDistribution({ color: v })} />
+                <div className="hcfg-row">
+                  <TextInput label="Line Width" type="number" value={String(ui.style.distribution.width)} onChange={({ value: v }: { value: string }) => patchDistribution({ width: num(v, 3) })} />
+                  <StyleSelect label="Dash Style" value={ui.style.distribution.dashStyle} options={DASH_STYLES} onSelect={(v) => patchDistribution({ dashStyle: v })} />
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </ProductAccordionItem>
     </div>
   );
 
@@ -828,7 +847,6 @@ export function HistogramWidgetConfiguration({
             ui={ui}
             onChange={(style) => patchUi({ style })}
             onPatchUi={patchUi}
-            onPatchPlotLine={patchPlotLine}
           />
         )}
       </div>
