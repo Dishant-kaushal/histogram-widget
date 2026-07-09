@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import type { ReactNode } from 'react';
-import { Plus, Edit2, Trash2, ArrowLeft } from 'react-feather';
+import { Plus, Edit2, Trash2, ArrowLeft, Info } from 'react-feather';
 import { UNSPathInput } from '@faclon-labs/design-sdk/UNSPathInput';
 import { ColorInput } from '@faclon-labs/design-sdk/ColorPicker';
 import {
@@ -80,6 +80,7 @@ const DEFAULT_UI_CONFIG: HistogramUIConfig = {
   chartLabel: 'Parameter',
   dataSources: [],
   bins: [],
+  rightAxes: [],
   aggregationMode: 'cumulative',
   includeStartEnd: false,
   showBinRanges: false,
@@ -284,6 +285,70 @@ function BinRows({ bins, onChange }: { bins: Bin[]; onChange: (bins: Bin[]) => v
       <div className="hcfg-add-row">
         <Button variant="Secondary" size="Small" leadingIcon={<Plus size={14} />} label="Add Bin" onClick={add} />
       </div>
+    </div>
+  );
+}
+
+// ─── Add Right Axis form (popup) ─────────────────────────────────────────────
+
+function AxisForm({
+  existingNames,
+  availableSources,
+  onSubmit,
+  onReady,
+}: {
+  existingNames: string[];
+  availableSources: HistogramDataSource[];
+  onSubmit: (axis: { name: string; dataSourceIds: string[] }) => void;
+  onReady: (b: EditorBinding) => void;
+}) {
+  const [name, setName] = useState('Value');
+  const [sourceId, setSourceId] = useState('');
+  const [srcOpen, setSrcOpen] = useState(false);
+
+  const nameTaken = existingNames.map((n) => n.trim().toLowerCase()).includes(name.trim().toLowerCase());
+  const isValid = name.trim() !== '' && !nameTaken && sourceId !== '';
+
+  const submit = useCallback(() => {
+    if (!isValid) return;
+    onSubmit({ name: name.trim(), dataSourceIds: [sourceId] });
+  }, [isValid, name, sourceId, onSubmit]);
+
+  useEditorBinding(isValid, submit, onReady);
+
+  return (
+    <div className="hcfg-editor">
+      <TextInput
+        label="Name"
+        necessityIndicator="required"
+        value={name}
+        validationState={nameTaken ? 'error' : undefined}
+        helpText={nameTaken ? 'This name already exists. Try a different name.' : undefined}
+        onChange={({ value }: { value: string }) => setName(value)}
+      />
+      <SelectInput
+        label="Data Source"
+        placeholder="Enter title"
+        value={availableSources.find((s) => s._id === sourceId)?.name || ''}
+        isOpen={srcOpen}
+        onClick={() => setSrcOpen((o) => !o)}
+      >
+        <DropdownMenu>
+          {availableSources.length === 0 ? (
+            <ActionListItem title="No available data sources" selectionType="None" isDisabled />
+          ) : (
+            availableSources.map((s) => (
+              <ActionListItem
+                key={s._id}
+                title={s.name || 'Data Source'}
+                selectionType="Single"
+                isSelected={sourceId === s._id}
+                onClick={() => { setSourceId(s._id); setSrcOpen(false); }}
+              />
+            ))
+          )}
+        </DropdownMenu>
+      </SelectInput>
     </div>
   );
 }
@@ -614,9 +679,13 @@ export function HistogramWidgetConfiguration({
   const [editorBinding, setEditorBinding] = useState<EditorBinding | null>(null);
   const [modalAnchor, setModalAnchor] = useState<{ x: number; y: number }>({ x: 360, y: 120 });
   const [dsExpanded, setDsExpanded] = useState(true);
+  const [axisExpanded, setAxisExpanded] = useState(true);
   const [binsExpanded, setBinsExpanded] = useState(true);
   const [plotExpanded, setPlotExpanded] = useState(false);
   const [distExpanded, setDistExpanded] = useState(false);
+  // Add Right Axis popup.
+  const [axisPanelOpen, setAxisPanelOpen] = useState(false);
+  const [axisEditorBinding, setAxisEditorBinding] = useState<EditorBinding | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
 
   // Position a side popup beside the config panel; clamp so it's always fully
@@ -680,6 +749,19 @@ export function HistogramWidgetConfiguration({
   const patchDistribution = (patch: Partial<HistogramStyling['distribution']>) =>
     patchUi({ style: { ...ui.style, distribution: { ...ui.style.distribution, ...patch } } });
 
+  // ── Axis (left is implicit; right axes are user-added) ──
+  const rightAxes = ui.rightAxes ?? [];
+  const assignedSourceIds = new Set(rightAxes.flatMap((a) => a.dataSourceIds));
+  const leftSourceCount = ui.dataSources.filter((s) => !assignedSourceIds.has(s._id)).length;
+  const availableForRightAxis = ui.dataSources.filter((s) => !assignedSourceIds.has(s._id));
+  const submitRightAxis = (axis: { name: string; dataSourceIds: string[] }) => {
+    patchUi({ rightAxes: [...rightAxes, { _id: `axis_${Date.now()}`, ...axis }] });
+    setAxisPanelOpen(false);
+    setAxisEditorBinding(null);
+  };
+  const deleteRightAxis = (id: string) =>
+    patchUi({ rightAxes: rightAxes.filter((a) => a._id !== id) });
+
   function handleTimeConfigChange(next: TimeTabUIConfig) {
     setTimeTabConfig(next);
     emit(ui, next);
@@ -736,6 +818,50 @@ export function HistogramWidgetConfiguration({
                   <div className="hcfg-ds-actions">
                     <IconAction icon={<Edit2 size={14} />} label="Edit data source" onClick={() => openSrcPanel({ mode: 'edit', index: i })} />
                     <IconAction icon={<Trash2 size={14} />} label="Delete data source" onClick={() => patchUi({ dataSources: ui.dataSources.filter((_, idx) => idx !== i) })} />
+                  </div>
+                }
+              />
+            ))}
+          </div>
+        )}
+      </ProductAccordionItem>
+
+      {/* Axis — Left is default; add right axes for sources on a different scale. */}
+      <ProductAccordionItem
+        title="Axis"
+        trailingIcon={<span className="hcfg-ds-count BodyXSmallMedium">{1 + rightAxes.length}</span>}
+        isExpanded={axisExpanded}
+        onToggle={() => setAxisExpanded((v) => !v)}
+        headerAction={
+          availableForRightAxis.length > 0 ? (
+            <IconAction
+              small
+              icon={<Plus size={16} />}
+              label="Add right axis"
+              onClick={() => {
+                if (!axisExpanded) setAxisExpanded(true);
+                setModalAnchor(computeModalAnchor());
+                setAxisEditorBinding(null);
+                setAxisPanelOpen(true);
+              }}
+            />
+          ) : undefined
+        }
+      >
+        {axisExpanded && (
+          <div className="hcfg-accordion-body">
+            <p className="hcfg-axis-hint BodyXSmallRegular">
+              <Info size={13} /> Left axis is used by default. Add a right axis for different values.
+            </p>
+            <ListCard title="Axis" subtitle={`Left · ${leftSourceCount} Data Source${leftSourceCount === 1 ? '' : 's'}`} />
+            {rightAxes.map((a) => (
+              <ListCard
+                key={a._id}
+                title={a.name}
+                subtitle={`Right · ${a.dataSourceIds.length} Data Source${a.dataSourceIds.length === 1 ? '' : 's'}`}
+                trailingItems={
+                  <div className="hcfg-ds-actions">
+                    <IconAction icon={<Trash2 size={14} />} label={`Delete axis ${a.name}`} onClick={() => deleteRightAxis(a._id)} />
                   </div>
                 }
               />
@@ -893,6 +1019,41 @@ export function HistogramWidgetConfiguration({
                 closeSrcPanel();
               }}
               onReady={setEditorBinding}
+            />
+          </ModalBody>
+        </Modal>
+      )}
+
+      {axisPanelOpen && (
+        <Modal
+          isOpen
+          onClose={() => setAxisPanelOpen(false)}
+          positionX={modalAnchor.x}
+          positionY={modalAnchor.y}
+          className="hcfg-side-modal"
+          header={<ModalHeader title="Add Right Axis" onClose={() => setAxisPanelOpen(false)} />}
+          footer={
+            <ModalFooter
+              primaryAction={
+                <Button
+                  variant="Primary"
+                  size="Small"
+                  isFullWidth
+                  label="Add Axis"
+                  isDisabled={!axisEditorBinding || !axisEditorBinding.isValid}
+                  onClick={() => { if (axisEditorBinding?.isValid) axisEditorBinding.submit(); }}
+                />
+              }
+              secondaryAction={<Button variant="Secondary" size="Small" isFullWidth label="Cancel" onClick={() => setAxisPanelOpen(false)} />}
+            />
+          }
+        >
+          <ModalBody>
+            <AxisForm
+              existingNames={['Left', ...rightAxes.map((a) => a.name)]}
+              availableSources={availableForRightAxis}
+              onSubmit={submitRightAxis}
+              onReady={setAxisEditorBinding}
             />
           </ModalBody>
         </Modal>

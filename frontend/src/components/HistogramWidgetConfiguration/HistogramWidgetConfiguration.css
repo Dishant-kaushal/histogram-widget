@@ -181,6 +181,18 @@
   gap: var(--spacing-02);
 }
 
+/* Axis accordion — info hint line */
+.hcfg-axis-hint {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-02);
+  color: var(--text-default-secondary);
+}
+.hcfg-axis-hint svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
 /* Bin Range — inline From/To rows */
 .hcfg-bin-rows {
   display: flex;

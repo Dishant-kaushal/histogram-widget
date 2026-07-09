@@ -172,6 +172,15 @@ export interface HistogramDataSource {
 
 export type HistogramAggregation = 'cumulative' | 'daily';
 
+/** A user-added right y-axis. The Left axis is implicit (name "Left") and holds
+ *  every data source not assigned to a right axis. */
+export interface HistogramRightAxis {
+  _id: string;
+  name: string;
+  /** Data source _ids plotted against this right axis. */
+  dataSourceIds: string[];
+}
+
 export interface HistogramPlotLine {
   _id: string;
   name: string;
@@ -208,6 +217,8 @@ export interface HistogramUIConfig {
   dataSources: HistogramDataSource[];
   /** Chart-level bin ranges (From/To), applied to every data source. */
   bins: Bin[];
+  /** User-added right y-axes; Left is implicit and holds unassigned sources. */
+  rightAxes?: HistogramRightAxis[];
   aggregationMode: HistogramAggregation;
   /** v1 "Include Start & End" — count values sitting exactly on a bin's start/end boundary. */
   includeStartEnd: boolean;
