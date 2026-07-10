@@ -101,10 +101,22 @@ export function getSeriesData(key: string, data: DataEntry[]): SeriesPayload | n
     | (DataEntry & Partial<SeriesPayload>)
     | undefined;
   if (!entry) return null;
-  const v = entry.value as SeriesPayload | string | number | null | undefined;
-  if (v !== null && typeof v === 'object' && (v as SeriesPayload).__type === 'series') {
-    return v as SeriesPayload;
+  const v = entry.value as (Partial<SeriesPayload> & { slots?: unknown }) | string | number | null | undefined;
+  // Series payload nested under `value` — accept it whether or not it carries the
+  // `__type` tag (our mini-engine tags it; some host DataLayers pass the raw
+  // {path,meta,range,slots} object untagged, which would otherwise read as null).
+  if (v !== null && typeof v === 'object' && Array.isArray((v as { slots?: unknown }).slots)) {
+    const vp = v as Partial<SeriesPayload>;
+    return {
+      __type: 'series',
+      path: vp.path ?? entry.path ?? '',
+      meta: vp.meta as SeriesPayload['meta'],
+      range: vp.range as SeriesPayload['range'],
+      slots: vp.slots as SeriesPayload['slots'],
+      comparisonSlots: (vp as { comparisonSlots?: SeriesPayload['slots'] }).comparisonSlots,
+    };
   }
+  // Raw production shape — slots directly on the entry (no `value` wrapper).
   if (Array.isArray(entry.slots)) {
     return {
       __type: 'series',
@@ -112,6 +124,8 @@ export function getSeriesData(key: string, data: DataEntry[]): SeriesPayload | n
       meta: entry.meta as SeriesPayload['meta'],
       range: entry.range as SeriesPayload['range'],
       slots: entry.slots as SeriesPayload['slots'],
+      // Preserve the previous-period buckets so comparison mode can bin them.
+      comparisonSlots: (entry as { comparisonSlots?: SeriesPayload['slots'] }).comparisonSlots,
     };
   }
   return null;

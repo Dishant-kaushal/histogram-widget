@@ -3,11 +3,17 @@
   flex-direction: column;
   width: 100%;
   height: 100%;
-  min-height: 380px;
+  /* min-width:0 + overflow:hidden let the widget shrink below its content's
+     intrinsic width (flex default min-width:auto blocks it) — matches the
+     column/line chart so the widget keeps resizing down to a small width. */
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
   background: #ffffff;
   border: 1px solid #e5e9f2;
   border-radius: 12px;
   padding: 16px;
+  gap:14px;
   box-sizing: border-box;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
@@ -17,7 +23,46 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  min-width: 0;
+  /* NOTE: no `overflow: hidden` here — the Chart Control / export dropdowns are
+     absolutely positioned just below the header and would be clipped by it. The
+     title clips itself (its own overflow+ellipsis) so the header still shrinks on
+     resize, and min-height (below) reserves the row height so hiding the title /
+     action icons in the Style tab never collapses the row and shifts the chart up. */
+  min-height: 32px;
+  flex-shrink: 0;
   margin-bottom: 8px;
+}
+
+/* Time controls row (DatePicker on the left + periodicity pinned right).
+   min-width:0 + overflow:hidden zero out its min-content so the DatePicker
+   doesn't pin a floor on how narrow the widget can get (was stuck ~403px). */
+.histogram-widget__timebar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  overflow: hidden;
+  flex-wrap: wrap;
+  flex-shrink: 0;
+  margin-bottom: 8px;
+}
+/* Periodicity dropdown sits at the far right edge of the toolbar row. */
+.histogram-widget__periodicity {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+/* Fixed / global time caption — a subtle clock-icon + text (no bordered chip). */
+.histogram-widget__fixed-time {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #6b7280;
+}
+.histogram-widget__fixed-time svg {
+  color: #6b7280;
+  flex-shrink: 0;
 }
 
 .histogram-widget__title {
@@ -27,6 +72,29 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Chart title switcher (shown when the widget has >1 chart). */
+.histogram-widget__title-switcher {
+  position: relative;
+}
+.histogram-widget__title-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  color: inherit;
+}
+.histogram-widget__title-btn:hover {
+  opacity: 0.85;
+}
+/* Left-anchored variant of the dropdown (title sits on the left of the header). */
+.histogram-widget__menu-anchor--left {
+  left: 0;
+  right: auto;
 }
 
 .histogram-widget__actions {
@@ -143,43 +211,24 @@
   opacity: 0.5;
   cursor: not-allowed;
 }
-/* Chart-settings (gear) menu — Chart Control header, checkboxes, toggle row. */
-.histogram-widget__menu--settings {
-  gap: 8px;
-  padding: 10px 12px;
-  min-width: 240px;
-}
-.histogram-widget__setting-row {
-  display: flex;
+/* SDK ChartActions icon group + the DropdownMenus it opens. The group is the
+   positioning context; each menu floats just below the icons, right-aligned. */
+.histogram-widget__chart-actions {
+  position: relative;
+  display: inline-flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  gap: 8px;
 }
-.histogram-widget__setting-text {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
+/* 8px between the Info / Settings / More icons (matches SDK --spacing-03). */
+.histogram-widget__chart-actions .fds-chart__actions {
+  gap: 8px;
 }
-.histogram-widget__setting-title {
-  font-size: 13px;
-  color: #292f2e;
-}
-.histogram-widget__setting-desc {
-  font-size: 11px;
-  line-height: 1.4;
-  color: #8a94a6;
-}
-
-.histogram-widget__menu-divider {
-  height: 1px;
-  background: #eef1f7;
-  margin: 4px 0;
-}
-.histogram-widget__menu-label {
-  font-size: 11px;
-  font-weight: 600;
-  color: #9aa3b5;
-  padding: 6px 10px 2px;
+.histogram-widget__menu-anchor {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 20;
+  min-width: 220px;
 }
 
 .histogram-widget__popover {
@@ -201,14 +250,19 @@
 .histogram-widget__chart-area {
   flex: 1;
   min-height: 0;
+  min-width: 0;
   position: relative;
+  display: flex;
+  flex-direction: column;
 }
 
-/* Wrapper that gives the SDK ColumnChart/LineChart a sized container to fill. */
+/* Wrapper that gives the SDK ColumnChart/LineChart a sized container to fill.
+   min-width:0 lets it shrink so the SDK chart reflows to narrow widths. */
 .histogram-widget__chart {
   width: 100%;
-  height: 100%;
-  min-height: 320px;
+  min-width: 0;
+  flex: 1 1 auto;
+  min-height: 260px;
 }
 
 .histogram-widget__loading,

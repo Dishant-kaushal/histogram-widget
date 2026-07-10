@@ -48,6 +48,9 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [token, setToken] = useState('');
   const [authError, setAuthError] = useState('');
+  // Time override from the widget's DatePicker (local mode) — simulates the host
+  // re-running the query with the user-picked window.
+  const [override, setOverride] = useState<{ startTime: number; endTime: number } | undefined>(undefined);
   // Render the configurator/widget client-only. The design-sdk's
   // ProductAccordionItem and TimeTabConfiguration render a <button> inside a
   // <button> (invalid HTML) — harmless in the host's client-only mount, but it
@@ -85,16 +88,16 @@ export default function Home() {
       return;
     }
     let cancelled = false;
-    console.log('[Harness] resolving envelope:', envelope.dynamicBindingPathList);
+    console.log('[Harness] resolving envelope:', envelope.dynamicBindingPathList, { override });
     setLoading(true);
-    resolve(envelope, { authentication: token }).then(({ data: resolved }) => {
+    resolve(envelope, { authentication: token, override }).then(({ data: resolved }) => {
       if (cancelled) return;
       console.log('[Harness] resolved data:', resolved);
       setData(resolved);
       setLoading(false);
     });
     return () => { cancelled = true; };
-  }, [envelope, token]);
+  }, [envelope, token, override]);
 
   return (
     <div style={{ display: 'flex', height: '100vh', fontFamily: 'system-ui, sans-serif', background: '#f8fafc' }}>
@@ -162,7 +165,11 @@ export default function Home() {
           <span style={{ fontSize: 13, fontWeight: 600, color: '#374151' }}>Widget Preview</span>
           <span style={{ fontSize: 11, color: '#9ca3af' }}>
             {envelope
-              ? `${envelope.uiConfig.dataSources.length} source(s) · ${envelope.uiConfig.aggregationMode} · ${envelope.dynamicBindingPathList.length} binding(s)`
+              ? (() => {
+                  const uc = envelope.uiConfig;
+                  const active = uc.charts.find((c) => c._id === uc.activeChartId) ?? uc.charts[0];
+                  return `${uc.charts.length} chart(s) · ${active?.dataSources.length ?? 0} source(s) · ${active?.aggregationMode ?? '—'} · ${envelope.dynamicBindingPathList.length} binding(s)`;
+                })()
               : 'not configured'}
           </span>
         </div>
@@ -172,7 +179,13 @@ export default function Home() {
               config={envelope.uiConfig}
               data={data}
               loading={loading}
-              onEvent={(e) => console.log('[Widget Event]', e)}
+              timeTabConfig={envelope.timeTabConfig}
+              onEvent={(e) => {
+                console.log('[Widget Event]', e);
+                if (e.type === 'TIME_CHANGE') {
+                  setOverride({ startTime: Number(e.payload.startTime), endTime: Number(e.payload.endTime) });
+                }
+              }}
             />
           ) : (
             <div style={{ padding: 32, color: '#9ca3af', fontSize: 13 }}>

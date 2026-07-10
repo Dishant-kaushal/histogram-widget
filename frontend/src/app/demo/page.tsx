@@ -44,18 +44,28 @@ const BINS = Array.from({ length: 10 }, (_, i) => ({
 }));
 
 const UI: HistogramUIConfig = {
-  chartTitle: 'Temperature Distribution',
-  chartLabel: 'Temperature',
-  aggregationMode: 'cumulative',
-  includeStartEnd: false,
-  showBinRanges: true,
-  showLineChart: true,
-  showDistributionLine: true,
-  showPlotLines: true,
-  plotLines: [{ _id: 'p1', name: 'Target', color: '#ff5252', value: 90, lineWidth: 2, dashStyle: 'Dash' }],
-  bins: BINS,
-  dataSources: [
-    { _id: 'ds1', name: 'Line A Temp', unsPath: '{{uns:ws1://plant/lineA/temp}}', dataPrecision: 2, enableLineChart: true },
+  activeChartId: 'chart_1',
+  charts: [
+    {
+      _id: 'chart_1',
+      chartTitle: 'Temperature Distribution',
+      chartLabel: 'Temperature',
+      aggregationMode: 'cumulative',
+      includeStartEnd: false,
+      showBinRanges: true,
+      showLineChart: true,
+      showDistributionLine: true,
+      distributionLines: [
+        { _id: 'dl1', name: 'Normal Fit', color: '#FF6B6B', lineWidth: 3, dashStyle: 'Solid' },
+        { _id: 'dl2', name: 'Reference', color: '#4d79ff', lineWidth: 2, dashStyle: 'Dash' },
+      ],
+      showPlotLines: true,
+      plotLines: [{ _id: 'p1', name: 'Target', color: '#ff5252', value: 90, lineWidth: 2, dashStyle: 'Dash' }],
+      bins: BINS,
+      dataSources: [
+        { _id: 'ds1', name: 'Line A Temp', color: '#4D79FF', unsPath: '{{uns:ws1://plant/lineA/temp}}', dataPrecision: 2, enableLineChart: true },
+      ],
+    },
   ],
   style: {
     size: { preset: 'Large', customWidth: 1400, customHeight: 480 },
@@ -73,7 +83,7 @@ const UI: HistogramUIConfig = {
 
 export default function Demo() {
   const data: DataEntry[] = useMemo(
-    () => [{ key: 'dataSources[0].unsPath', value: { __type: 'series', path: '', meta: {} as never, range: { from: 0, to: 0 }, slots: mockSlots() } }],
+    () => [{ key: 'charts[0].dataSources[0].unsPath', value: { __type: 'series', path: '', meta: {} as never, range: { from: 0, to: 0 }, slots: mockSlots() } }],
     [],
   );
   return (

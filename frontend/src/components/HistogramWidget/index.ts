@@ -16,7 +16,7 @@ import React, { useEffect, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { HistogramWidget } from './HistogramWidget';
 import { resolve } from '../../iosense-sdk/mini-engine';
-import type { DataEntry, HistogramEnvelope, HistogramUIConfig, WidgetEvent } from '../../iosense-sdk/types';
+import type { DataEntry, HistogramEnvelope, HistogramUIConfig, TimeTabUIConfig, WidgetEvent } from '../../iosense-sdk/types';
 // Bundle the design-sdk stylesheet so the widget's SDK components (EmptyState,
 // etc.) are styled inside the host's shadow root, which loads only this bundle CSS.
 import '@faclon-labs/design-sdk/styles.css';
@@ -27,6 +27,9 @@ interface WidgetProps {
   /** Host-resolved data items. Presence of this prop (even []) = host mode. */
   data?: unknown;
   timeConfig?: unknown;
+  /** Raw SDK time config — the host's preferred read path; drives the widget's
+   *  above-chart time picker. Standalone: taken from the envelope. */
+  timeTabConfig?: TimeTabUIConfig;
   editMode?: boolean;
   onEvent?: (e: WidgetEvent) => void;
   authentication?: string;
@@ -78,7 +81,15 @@ function HistogramWidgetDataLayer(props: WidgetProps) {
   }, [hostMode, envelope, authentication]);
 
   const data = hostMode ? normalizeHostData(hostData) : fetched;
-  console.log('[HistogramWidgetDataLayer]', { hostMode, entries: data.length, hasUiConfig: !!(uiConfig as HistogramUIConfig)?.dataSources });
+  // Time config for the picker + initial window/periodicity. The host does NOT pass
+  // the raw SDK `timeTabConfig` — it passes the RICH `timeConfig` (allDurations,
+  // defaultDurationId, defaultPeriodicity, pickerType). Read that first so the
+  // picker + default periodicity survive a save + refresh; fall back to an explicit
+  // timeTabConfig prop or the standalone envelope's.
+  const timeTabConfig = (props.timeTabConfig ??
+    (props.timeConfig as TimeTabUIConfig | undefined) ??
+    envelope?.timeTabConfig) as TimeTabUIConfig | undefined;
+  console.log('[HistogramWidgetDataLayer]', { hostMode, entries: data.length, charts: (uiConfig as HistogramUIConfig)?.charts?.length ?? 0 });
 
   return React.createElement(HistogramWidget, {
     config: uiConfig,
@@ -86,6 +97,7 @@ function HistogramWidgetDataLayer(props: WidgetProps) {
     // Host mode: no explicit flag — the widget's empty-data heuristic covers the
     // gap between mount and the first data push.
     loading: hostMode ? undefined : loading,
+    timeTabConfig,
     onEvent: onEvent ?? ((e: WidgetEvent) => console.log('[HistogramWidget Event]', e)),
   });
 }

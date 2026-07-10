@@ -26,11 +26,53 @@
   overflow-y: auto;
   min-height: 0;
 }
+/* Keep the header + footer fixed so the body is the ONLY scroll region — the
+   footer (Save/Add) stays visible even when the Style accordion inside the form
+   expands and grows the body past the viewport. */
+.hcfg-side-modal .fds-modal-header__root,
+.hcfg-side-modal .fds-modal-footer {
+  flex-shrink: 0;
+}
+/* The Style accordion inside these popups lives in an already-padded modal body,
+   so strip its own inset (SDK default is spacing-05 all round) — it was adding a
+   second layer of padding and misaligning the accordion from the form fields. */
+.hcfg-side-modal .fds-pa-item__header {
+  padding: var(--spacing-03) 0;
+}
+.hcfg-side-modal .fds-pa-item__body-inner {
+  padding: var(--spacing-03) 0 0;
+}
 .fds-select-input__popover,
 .fds-color-input__popover,
 .fds-uns-path-input__popover,
 .fds-modal__backdrop .fds-dropdown-menu {
   z-index: 10002 !important;
+}
+
+/* SDK TimeTabConfiguration's Add Duration / Add Shift popups are SDK Modals with
+   a `.fds-ttc__panel-modal` backdrop. That backdrop is a full-viewport click
+   catcher, so clicking a portalled SelectInput/ColorInput OPTION inside the popup
+   lands on the backdrop and fires the SDK's outside-click close → the popup shuts
+   the moment you pick a dropdown value. Make the backdrop click-through
+   (pointer-events:none) while keeping the inner positioned modal interactive, so
+   dropdown selections no longer close the popup (mirrors the Line Chart fix). */
+.fds-ttc__panel-modal.fds-modal__backdrop {
+  pointer-events: none !important;
+}
+/* Re-enable pointer events on the modal itself (any inner-modal class variant). */
+.fds-ttc__panel-modal > * {
+  pointer-events: auto;
+}
+
+/* The histogram has no Comparison or periodicity-disable features, but the SDK
+   TimeTabConfiguration renders those toggles unconditionally (no prop to hide
+   them). Suppress them so the Time tab shows only the duration/timezone controls.
+   Selectors key off the Switch's <input name> (…comparisonMode /
+   …disablePeriodicities), stable across the fixed/global/local picker variants. */
+.fds-ttc__switch-row:has(input[name$="comparisonMode"]),
+.fds-ttc__switch-row:has(input[name$="disablePeriodicities"]),
+.fds-comparison-toggle {
+  display: none !important;
 }
 
 .hcfg-editor {
@@ -71,8 +113,17 @@
   width: 20px;
   height: 20px;
 }
+/* Destructive (Delete) — error color, matching the Figma's red trash icon. */
+.hcfg-icon-action--destructive {
+  color: var(--text-negative-default, #d92d20);
+}
+.hcfg-icon-action--destructive:hover {
+  color: var(--text-negative-default, #d92d20);
+  background: var(--background-negative-subtle, #fef3f2);
+}
 
-/* Counter pill shown next to the "Data Sources" title (trailingIcon slot). */
+/* Counter pill next to accordion titles (Data Sources / Axis / Bin Range / Plot
+   Line / Distribution Line). Neutral gray (not brand blue). */
 .hcfg-ds-count {
   display: inline-flex;
   align-items: center;
@@ -81,8 +132,8 @@
   height: 18px;
   padding: 0 var(--spacing-02);
   border-radius: 9px;
-  background: var(--background-brand-subtle, #e8effe);
-  color: var(--text-brand-default, #2f6fed);
+  background: var(--background-gray-subtle, var(--background-default-moderate, #eef0f3));
+  color: var(--text-default-secondary, #5f6b7a);
 }
 .hcfg-ds-dot {
   width: 10px;
@@ -110,11 +161,11 @@
 }
 .hcfg-header__title {
   color: var(--text-default-primary);
+  font-size: 16px;
 }
 
 .hcfg-tabs {
   flex-shrink: 0;
-  padding: 0 var(--spacing-04);
 }
 
 .hcfg-body {
@@ -160,6 +211,27 @@
   border-bottom: var(--global-border-width-thin) solid var(--border-gray-muted);
 }
 
+/* Chart Settings block — header (title + add/edit/delete) then Title + Description. */
+.hcfg-chart-settings {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-04);
+}
+.hcfg-chart-settings__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-03);
+}
+.hcfg-chart-settings__title {
+  color: var(--text-default-primary);
+}
+.hcfg-chart-settings__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--spacing-03);
+}
+
 /* Per-data-source block inside the Bins accordion. */
 .hcfg-bin-source {
   display: flex;
@@ -198,7 +270,6 @@
   display: flex;
   flex-direction: column;
   gap: var(--spacing-03);
-  padding: 0 var(--spacing-04);
 }
 .hcfg-bin-row {
   display: flex;
@@ -310,6 +381,32 @@
   justify-content: flex-start;
 }
 
+/* Add Bin — full-width filled button (subtle dark tint), 32px, dark text + icon. */
+.hcfg-add-bin-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  height: 32px;
+  padding: 0 var(--spacing-03);
+  border: none;
+  border-radius: var(--global-border-radius-medium, 6px);
+  background: #434b5114;
+  color: #050505;
+  font-size: 13px;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+}
+.hcfg-add-bin-btn svg {
+  color: #050505;
+  flex-shrink: 0;
+}
+.hcfg-add-bin-btn:hover {
+  background: #434b511f;
+}
+
 /* Style tab blocks */
 .hcfg-style-block {
   display: flex;
@@ -323,5 +420,12 @@
 .hcfg-checkbox-col {
   display: flex;
   flex-direction: column;
+  align-items: flex-start;
   gap: var(--spacing-03);
+}
+/* The SDK checkbox root is inline-flex; a flex column stretches it full-width and
+   its row can drift from the left. Pin each checkbox to shrink-to-content + left. */
+.hcfg-checkbox-col > .fds-checkbox {
+  align-self: flex-start;
+  width: auto;
 }
