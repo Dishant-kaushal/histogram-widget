@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import "@faclon-labs/design-sdk/styles.css";
+import "@faclon-labs/design-sdk/base.css";
 import "@fontsource-variable/inter";
 import "./globals.css";
 

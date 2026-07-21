@@ -10,7 +10,8 @@
     "lint": "eslint"
   },
   "dependencies": {
-    "@faclon-labs/design-sdk": "^0.7.3",
+    "@faclon-labs/design-sdk": "file:./vendor/faclon-labs-design-sdk-0.7.11.tgz",
+    "@fontsource-variable/inter": "^5.3.0",
     "highcharts": "^12.0.0",
     "highcharts-react-official": "^3.2.1",
     "next": "16.2.10",

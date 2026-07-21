@@ -19,7 +19,7 @@ import { resolve } from '../../iosense-sdk/mini-engine';
 import type { DataEntry, HistogramEnvelope, HistogramUIConfig, TimeTabUIConfig, WidgetEvent } from '../../iosense-sdk/types';
 // Bundle the design-sdk stylesheet so the widget's SDK components (EmptyState,
 // etc.) are styled inside the host's shadow root, which loads only this bundle CSS.
-import '@faclon-labs/design-sdk/styles.css';
+import '@faclon-labs/design-sdk/base.css';
 
 interface WidgetProps {
   /** Host: the uiConfig. Standalone/legacy: the full envelope. */

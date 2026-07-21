@@ -5,27 +5,25 @@ import type { ReactNode, ChangeEvent } from 'react';
 import { Plus, Edit2, Trash2, ArrowLeft, Info } from 'react-feather';
 import { UNSPathInput } from '@faclon-labs/design-sdk/UNSPathInput';
 import { ColorInput } from '@faclon-labs/design-sdk/ColorPicker';
+import { Tabs, TabItem } from '@faclon-labs/design-sdk/Tabs';
+import { TextInput } from '@faclon-labs/design-sdk/TextInput';
+import { Button } from '@faclon-labs/design-sdk/Button';
+import { IconButton } from '@faclon-labs/design-sdk/IconButton';
+import { SelectInput } from '@faclon-labs/design-sdk/SelectInput';
+import { DropdownMenu, ActionListItem } from '@faclon-labs/design-sdk/DropdownMenu';
+import { Switch } from '@faclon-labs/design-sdk/Switch';
+import { Checkbox } from '@faclon-labs/design-sdk/Checkbox';
+import { Divider } from '@faclon-labs/design-sdk/Divider';
+import { TimeTabConfiguration } from '@faclon-labs/design-sdk/TimeTabConfiguration';
+import { ProductAccordionItem } from '@faclon-labs/design-sdk/ProductAccordion';
+import { ListCard } from '@faclon-labs/design-sdk/ListCard';
 import {
-  Tabs,
-  TabItem,
-  TextInput,
-  Button,
-  IconButton,
-  SelectInput,
-  DropdownMenu,
-  ActionListItem,
-  Switch,
-  Checkbox,
-  Divider,
-  TimeTabConfiguration,
-  ProductAccordionItem,
-  ListCard,
   Modal,
   ModalHeader,
   ModalLeadingItem,
   ModalBody,
   ModalFooter,
-} from '@faclon-labs/design-sdk';
+} from '@faclon-labs/design-sdk/Modal';
 import { useUNSTree, type UNSTree } from '../../iosense-sdk/useUNSTree';
 import { resolveAndCompute } from '../../iosense-sdk/api';
 import { createGroups, slotsToPoints } from '../HistogramWidget/histogram-utils';

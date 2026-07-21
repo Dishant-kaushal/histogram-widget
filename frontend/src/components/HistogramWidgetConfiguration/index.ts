@@ -8,7 +8,7 @@ import type { HistogramEnvelope } from '../../iosense-sdk/types';
 // load it separately for the config surface, so without this the SDK components
 // (accordions, inputs, modals) render unstyled → overlap/broken layout. (Only the
 // Next.js dev harness imports it via layout.tsx, which is why dev looked fine.)
-import '@faclon-labs/design-sdk/styles.css';
+import '@faclon-labs/design-sdk/base.css';
 
 interface ConfigProps {
   config?: HistogramEnvelope;

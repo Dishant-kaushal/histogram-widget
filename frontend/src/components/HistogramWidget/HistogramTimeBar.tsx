@@ -10,7 +10,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Clock } from 'react-feather';
 import { DatePicker } from '@faclon-labs/design-sdk/DatePicker';
 import type { DateRange, DatePresetOption } from '@faclon-labs/design-sdk/DatePicker';
-import { SelectInput, DropdownMenu, ActionListItem } from '@faclon-labs/design-sdk';
+import { SelectInput } from '@faclon-labs/design-sdk/SelectInput';
+import { DropdownMenu, ActionListItem } from '@faclon-labs/design-sdk/DropdownMenu';
 import type { TimeTabUIConfig, WidgetEvent } from '../../iosense-sdk/types';
 import {
   computeRange,
