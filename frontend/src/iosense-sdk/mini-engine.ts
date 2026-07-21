@@ -76,16 +76,6 @@ export async function resolve(
       resolution,
     );
     const data: DataEntry[] = items.map((item) => ({ key: item.key, value: item.value }));
-    console.log(
-      '[MiniEngine] response →',
-      data.map((d) => {
-        if (d.value && typeof d.value === 'object' && '__type' in d.value) {
-          const p = d.value as SeriesPayload;
-          return { key: d.key, slotCount: p.slots?.length ?? 0 };
-        }
-        return { key: d.key, scalar: d.value };
-      }),
-    );
     return { config: envelope.uiConfig, data };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

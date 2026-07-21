@@ -15,11 +15,45 @@
   background: transparent;
 }
 .hcfg-side-modal .fds-modal {
-  width: 320px;
+  width: 280px;
   max-height: calc(100vh - 32px);
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+
+/* Delete-confirmation dialog — centered, dimmed backdrop for focus, modest width
+   (overrides the transparent side-modal backdrop above). */
+.hcfg-confirm-modal.fds-modal__backdrop {
+  background: rgba(15, 23, 42, 0.32) !important;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.hcfg-confirm-modal .fds-modal {
+  width: 400px;
+  max-width: calc(100vw - 32px);
+}
+/* Two-line message ("…?\nThis action is irreversible"). */
+.hcfg-confirm-message {
+  margin: 0;
+  white-space: pre-line;
+  color: var(--text-default-secondary, #3b4560);
+}
+/* Buttons right-aligned (Cancel + Delete), not full width. */
+.hcfg-confirm-modal .fds-modal-footer {
+  justify-content: flex-end;
+}
+/* Leading icon: the BIN (trash) icon in a red/pink rounded square (the SDK's
+   `error` variant would force a warning triangle, so we use the plain Icon
+   variant and paint the container ourselves). */
+.hcfg-confirm-modal .fds-modal-leading--icon {
+  width: 32px;
+  height: 32px;
+  padding: var(--spacing-02);
+  border-radius: var(--global-border-radius-medium, 8px);
+  background: var(--background-negative-subtle, var(--background-error-secondary, #fef3f2));
+  color: var(--text-negative-default, var(--text-error-default, #d92d20));
 }
 .hcfg-side-modal .fds-modal__body {
   flex: 1 1 auto;
@@ -33,14 +67,24 @@
 .hcfg-side-modal .fds-modal-footer {
   flex-shrink: 0;
 }
-/* The Style accordion inside these popups lives in an already-padded modal body,
-   so strip its own inset (SDK default is spacing-05 all round) — it was adding a
-   second layer of padding and misaligning the accordion from the form fields. */
+/* Style accordion inside the plot/distribution-line popups. It sits in an
+   already-padded modal body, so the SDK's default spacing-05 inset + heavy gray
+   header bar + divider lines looked cramped and pushed the content in on the
+   left/right. Make it flush with the form fields (no horizontal inset), give it
+   clean vertical padding, and drop the gray bar + borders for a lighter section. */
+.hcfg-side-modal .fds-pa-item {
+  width: 100%;
+}
 .hcfg-side-modal .fds-pa-item__header {
-  padding: var(--spacing-03) 0;
+  padding: var(--spacing-03) 0 !important;
+  background: transparent !important;
+  border-bottom: none !important;
+}
+.hcfg-side-modal .fds-pa-item__body {
+  border-bottom: none !important;
 }
 .hcfg-side-modal .fds-pa-item__body-inner {
-  padding: var(--spacing-03) 0 0;
+  padding: var(--spacing-04) 0 0 !important;
 }
 .fds-select-input__popover,
 .fds-color-input__popover,
@@ -113,6 +157,12 @@
   width: 20px;
   height: 20px;
 }
+/* Disabled — greyed out + non-interactive (kept visible, e.g. the two default bins). */
+.hcfg-icon-action--disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  pointer-events: none;
+}
 /* Destructive (Delete) — error color, matching the Figma's red trash icon. */
 .hcfg-icon-action--destructive {
   color: var(--text-negative-default, #d92d20);
@@ -135,12 +185,25 @@
   background: var(--background-gray-subtle, var(--background-default-moderate, #eef0f3));
   color: var(--text-default-secondary, #5f6b7a);
 }
+/* Data source color indicator — a rounded square (not a circle). */
 .hcfg-ds-dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
+  width: 12px;
+  height: 12px;
+  border-radius: 4px;
   background: var(--background-brand-default, #4d79ff);
   display: inline-block;
+  flex-shrink: 0;
+}
+
+/* Row action buttons (Delete) in a list card — revealed on hover/focus so the
+   card reads cleanly and the delete isn't a constant, easy-to-mis-click target. */
+.hcfg .fds-list-card .hcfg-ds-actions {
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.hcfg .fds-list-card:hover .hcfg-ds-actions,
+.hcfg .fds-list-card:focus-within .hcfg-ds-actions {
+  opacity: 1;
 }
 
 .hcfg {
@@ -159,9 +222,9 @@
   padding: var(--spacing-04) var(--spacing-04) var(--spacing-03);
   flex-shrink: 0;
 }
+/* Font/size/weight come from the SDK BodyLargeSemibold class + inline color token. */
 .hcfg-header__title {
-  color: var(--text-default-primary);
-  font-size: 16px;
+  color: var(--text-gray-primary);
 }
 
 .hcfg-tabs {

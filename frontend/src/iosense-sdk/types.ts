@@ -275,7 +275,7 @@ export type StylingWidgetSize = 'Small' | 'Medium' | 'Large' | 'Custom';
 export interface HistogramStyling {
   size: { preset: StylingWidgetSize; customWidth?: number; customHeight?: number; lockAspectRatio?: boolean };
   card: { wrapInCard: boolean; backgroundColor: string; borderColor: string; borderWidth: number; borderRadius: number };
-  hideElements: { settingsIcon: boolean; exportIcon: boolean; chartTitle: boolean };
+  hideElements: { settingsIcon: boolean; exportIcon: boolean; infoIcon: boolean; fixedTimeText: boolean; chartTitle: boolean };
   advancedEnabled: boolean;
   chartTitle: { fontSize: number; fontColor: string; fontWeight: StylingFontWeight };
   xAxisLabel: { textColor: string; lineColor: string; dataPointColor: string };

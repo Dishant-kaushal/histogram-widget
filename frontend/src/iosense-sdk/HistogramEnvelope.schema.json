@@ -1,0 +1,695 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "HistogramEnvelope",
+  "title": "HistogramEnvelope",
+  "description": "Root config envelope emitted by HistogramWidgetConfiguration.onChange() and received by the HistogramWidget renderer. No apiConfig — the widget never fetches its own data; the host DataLayer resolves dynamicBindingPathList and hands back DataEntry[] on the `data` prop. The widget bins the resolved series CLIENT-SIDE (bins are config, not a backend query).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["_id", "type", "general", "uiConfig", "dynamicBindingPathList"],
+  "properties": {
+    "_id": { "type": "string" },
+    "type": { "const": "HistogramWidget" },
+    "general": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["title"],
+      "properties": {
+        "title": {
+          "type": "string",
+          "description": "Widget header title. There is no separate Widget Title field — the configurator mirrors the ACTIVE chart's chartTitle here (falling back to 'Histogram')."
+        }
+      }
+    },
+    "timeConfig": {
+      "$ref": "#/$defs/HostTimeConfig",
+      "description": "RICH host shape produced by toHostTimeConfig(timeTabConfig). This is what the host passes to the widget as props.timeConfig — it is NOT the raw SDK shape. Written on every save."
+    },
+    "timeTabConfig": {
+      "$ref": "#/$defs/TimeTabUIConfig",
+      "description": "Raw design-sdk TimeTabConfiguration shape, host-hardened by hostSafeTimeTab() (non-null cycleTime, fully-resolved durations). The host's executeQuery reads `timeTabConfig || timeConfig` — timeTabConfig WINS, so it must be host-safe. Written on every save."
+    },
+    "uiConfig": { "$ref": "#/$defs/HistogramUIConfig" },
+    "dynamicBindingPathList": {
+      "type": "array",
+      "description": "Rebuilt by buildDynamicBindingPathList(uiConfig) before every onChange(). ONLY dataSources[].unsPath and Dynamic plotLines[].unsPath ever populate this — every other field is static config.",
+      "items": { "$ref": "#/$defs/BindingEntry" }
+    }
+  },
+
+  "$defs": {
+
+    "BindingEntry": {
+      "oneOf": [
+        { "$ref": "#/$defs/SeriesBinding" },
+        { "$ref": "#/$defs/ScalarBinding" }
+      ]
+    },
+    "ScalarBinding": {
+      "description": "Shape exists in the shared DataLayer contract, but the Histogram never emits one — every histogram binding is a series binding.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "topic"],
+      "properties": {
+        "key": { "type": "string", "description": "Dot/bracket path into uiConfig." },
+        "topic": { "type": "string", "description": "UNS topic extracted from {{ ... }}" }
+      }
+    },
+    "SeriesBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "topic", "type"],
+      "properties": {
+        "key": {
+          "type": "string",
+          "description": "Either `charts[ci].dataSources[i].unsPath` (the binned series) or `charts[ci].plotLines[pi].unsPath` (a Dynamic plot line's value source).",
+          "pattern": "^charts\\[\\d+\\]\\.(dataSources|plotLines)\\[\\d+\\]\\.unsPath$"
+        },
+        "topic": { "type": "string", "description": "UNS topic extracted from {{ ... }} by VARIABLE_REGEX = /^\\{\\{(.+)\\}\\}$/ — the braces are stripped, the inner string is stored verbatim." },
+        "type": { "const": "series", "description": "Always this, for every Histogram binding." },
+        "aggregation": {
+          "$ref": "#/$defs/SeriesAggregation",
+          "description": "Optional per-binding aggregation override forwarded to resolveAndCompute. The configurator does not currently emit it."
+        }
+      }
+    },
+
+    "HistogramUIConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["charts", "activeChartId", "style"],
+      "properties": {
+        "charts": {
+          "type": "array",
+          "description": "Independent chart panels — the widget renders the ACTIVE one, with a title switcher when there is more than one. Every field on a chart is per-chart; only `style` (and time) are widget-level.",
+          "items": { "$ref": "#/$defs/HistogramChart" }
+        },
+        "activeChartId": {
+          "type": ["string", "null"],
+          "description": "_id of the chart the widget renders. Persisted; the widget falls back to charts[0] when null or unmatched."
+        },
+        "style": { "$ref": "#/$defs/HistogramStyling" }
+      }
+    },
+
+    "HistogramChart": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "_id", "chartTitle", "chartLabel", "dataSources", "bins",
+        "aggregationMode", "includeStartEnd", "showBinRanges",
+        "showLineChart", "showDistributionLine", "showPlotLines", "plotLines"
+      ],
+      "properties": {
+        "_id": { "type": "string", "description": "Client-generated, never bindable." },
+        "chartTitle": { "type": "string", "description": "Rendered in the widget header; also mirrored to general.title when this chart is active." },
+        "description": { "type": "string", "description": "Optional long-form text surfaced via the widget's info icon. The icon is hidden when this is empty." },
+        "chartLabel": { "type": "string", "description": "Fallback series/legend name when no data source name is set." },
+        "dataSources": {
+          "type": "array",
+          "description": "One binned series per source. All sources share the chart-level `bins`.",
+          "items": { "$ref": "#/$defs/HistogramDataSource" }
+        },
+        "bins": {
+          "type": "array",
+          "description": "CHART-LEVEL value-range buckets (From/To), applied to every data source. Bar height = count of points whose value fell in the bin. The configurator seeds 2 bins from the source's live min/max on add; the widget auto-generates 2 bins at render time if this is empty or no data falls in any bin.",
+          "items": { "$ref": "#/$defs/Bin" }
+        },
+        "axes": {
+          "type": "array",
+          "description": "User-added axes — each binds ONE data source to the Left or Right side. The default Y axis (named by leftAxisName) always exists implicitly and is not listed here. Absent on saves that predate the feature.",
+          "items": { "$ref": "#/$defs/HistogramAxis" }
+        },
+        "rightAxes": {
+          "type": "array",
+          "deprecated": true,
+          "description": "Superseded by `axes` (single source + side). Kept for back-compat with older saves.",
+          "items": { "$ref": "#/$defs/HistogramRightAxis" }
+        },
+        "leftAxisName": { "type": "string", "description": "Editable display name of the default Y axis (Left)." },
+        "distributionLines": {
+          "type": "array",
+          "description": "Named normal-distribution overlay lines. A histogram chart has ONE aggregate normal fit, so every line here is a differently-STYLED overlay of the same computed curve — they differ only by color/width/dash, not data. Rendered only when showDistributionLine is true; when this is empty the legacy single overlay styled by style.distribution is used instead.",
+          "items": { "$ref": "#/$defs/HistogramDistributionLine" }
+        },
+        "aggregationMode": {
+          "$ref": "#/$defs/HistogramAggregation",
+          "description": "'cumulative' = one bar per bin over the whole window (x-axis = bins). 'daily' = grouped bars per calendar date (x-axis = dates, one bar per bin per date). The widget exposes this as the 'Cumulative Value' toggle; periodicity is disabled in cumulative mode."
+        },
+        "includeStartEnd": {
+          "type": "boolean",
+          "description": "false (default) = bins are [start, end) with the LAST bin end-inclusive. true = every bin is fully inclusive [start, end], so values on a boundary count in both neighbours."
+        },
+        "showBinRanges": { "type": "boolean", "description": "x-axis labels show the bin range ('294K - 1M', abbreviated) instead of the 1-based bin index. Cumulative mode only — daily mode always labels the x-axis with dates." },
+        "showLineChart": { "type": "boolean", "description": "Chart-level: render the frequency distribution as a LINE (frequency polygon) instead of bars. Cumulative mode only. OR-ed with any data source's enableLineChart." },
+        "showDistributionLine": { "type": "boolean", "description": "Draw the fitted normal-distribution spline overlay. Cumulative mode only." },
+        "showPlotLines": { "type": "boolean", "description": "Draw `plotLines` over the chart." },
+        "plotLines": {
+          "type": "array",
+          "description": "Horizontal reference lines. Rendered only when showPlotLines is true.",
+          "items": { "$ref": "#/$defs/HistogramPlotLine" }
+        }
+      }
+    },
+
+    "HistogramAggregation": { "enum": ["cumulative", "daily"] },
+
+    "Bin": {
+      "description": "A value-range bucket. STATIC config — never bindable.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["start", "end"],
+      "properties": {
+        "start": { "type": "number", "description": "Chained: the configurator re-derives each bin's `start` from the previous bin's `end` (gauge-range semantics) — only the FIRST bin's start is directly editable." },
+        "end": { "type": "number" },
+        "binName": { "type": "string", "description": "Optional. The redesigned Bins UI only edits From/To; the widget falls back to 'Bin {i}'. '' and '-' are the legacy v1 no-name sentinels." },
+        "color": { "type": "string", "description": "Optional per-bin bar color. Falls back to the data source's color, then to a palette entry." }
+      }
+    },
+
+    "HistogramDataSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["_id", "name", "color", "unsPath", "dataPrecision", "enableLineChart"],
+      "properties": {
+        "_id": { "type": "string", "description": "Client-generated, never bindable." },
+        "name": { "type": "string", "description": "Static display string (legend + tooltip), never bindable." },
+        "color": { "type": "string", "default": "#4D79FF", "description": "Bar color for this source's bins. A bin's own `color` wins over it." },
+        "unsPath": {
+          "type": "string",
+          "x-bindable": true,
+          "default": "",
+          "pattern": "^$|^\\{\\{uns:[^/]+://.+\\}\\}$",
+          "description": "'' or '{{uns:wsId://path}}'. THE binned series — resolved as series data, then bucketed client-side by the chart's `bins`. Field name MUST be `unsPath` (the DataLayer contract keys on it)."
+        },
+        "dataPrecision": { "type": "integer", "default": 2, "description": "Decimal places for displayed frequencies / drill-down values." },
+        "unit": { "type": "string", "description": "Measurement unit label shown alongside values in tooltips." },
+        "enableLineChart": { "type": "boolean", "default": false, "description": "v1 'Enable Data Source Line Chart' — render this source's frequency distribution as a line instead of bars (cumulative mode)." },
+        "automaticBinWidth": { "type": "boolean", "description": "v1 'Automatic Bin Width' — bins were auto-generated from the source's [min,max] rather than hand-added. Display/provenance hint only; the emitted `bins` are literal either way." },
+        "bins": {
+          "type": "array",
+          "deprecated": true,
+          "description": "Superseded by chart-level HistogramChart.bins. Kept optional for back-compat with older saves; the widget ignores it.",
+          "items": { "$ref": "#/$defs/Bin" }
+        }
+      }
+    },
+
+    "HistogramAxis": {
+      "description": "STATIC config — never bindable.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["_id", "name", "dataSourceId", "side"],
+      "properties": {
+        "_id": { "type": "string", "description": "Client-generated, never bindable." },
+        "name": { "type": "string" },
+        "dataSourceId": { "type": "string", "description": "The single HistogramDataSource._id plotted against this axis." },
+        "side": { "enum": ["left", "right"] }
+      }
+    },
+
+    "HistogramRightAxis": {
+      "deprecated": true,
+      "description": "Superseded by HistogramAxis (single source + side).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["_id", "name", "dataSourceIds"],
+      "properties": {
+        "_id": { "type": "string" },
+        "name": { "type": "string" },
+        "dataSourceIds": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+
+    "PlotLineValueType": { "enum": ["Fixed", "Dynamic"] },
+
+    "HistogramPlotLine": {
+      "description": "A horizontal reference line. The ONLY overlay that can be bindable — `unsPath` is read only when valueType === 'Dynamic'.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["_id", "name", "color", "value", "lineWidth", "dashStyle"],
+      "properties": {
+        "_id": { "type": "string", "description": "Client-generated, never bindable." },
+        "name": { "type": "string" },
+        "color": { "type": "string" },
+        "valueType": {
+          "$ref": "#/$defs/PlotLineValueType",
+          "default": "Fixed",
+          "description": "'Fixed' = draw at the literal `value`. 'Dynamic' = draw at the LATEST resolved value of `unsPath`. Only Dynamic lines are registered in dynamicBindingPathList."
+        },
+        "value": { "type": "number", "description": "The static y value. Used when valueType is 'Fixed' (or absent); also the fallback if a Dynamic topic resolves empty." },
+        "unsPath": {
+          "type": "string",
+          "x-bindable": true,
+          "default": "",
+          "pattern": "^$|^\\{\\{uns:[^/]+://.+\\}\\}$",
+          "description": "'' or '{{uns:wsId://path}}'. Read ONLY when valueType === 'Dynamic'. Field name MUST be `unsPath`."
+        },
+        "lineWidth": { "type": "number", "default": 2 },
+        "dashStyle": { "$ref": "#/$defs/HighchartsDashStyle", "default": "Dash" }
+      }
+    },
+
+    "HistogramDistributionLine": {
+      "description": "A styled normal-distribution overlay line. STATIC config — never bindable (the curve is computed from the binned data, not fetched).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["_id", "name", "color", "lineWidth", "dashStyle"],
+      "properties": {
+        "_id": { "type": "string", "description": "Client-generated, never bindable." },
+        "name": { "type": "string" },
+        "color": { "type": "string", "default": "#FF6B6B" },
+        "lineWidth": { "type": "number", "default": 3 },
+        "dashStyle": { "$ref": "#/$defs/HighchartsDashStyle", "default": "Solid" }
+      }
+    },
+
+    "HighchartsDashStyle": {
+      "enum": ["Solid", "ShortDash", "ShortDot", "ShortDashDot", "ShortDashDotDot", "Dot", "Dash", "LongDash", "DashDot", "LongDashDot", "LongDashDotDot"],
+      "description": "Highcharts dashStyle name, stored verbatim as a string. The UI only offers Solid/Dash; other values are legacy-only (older saves still render)."
+    },
+
+    "HistogramStyling": {
+      "description": "STATIC — never bindable, never in dynamicBindingPathList. Shared across ALL charts in the widget (the Style tab is widget-level, not per-chart). The widget merges this over its DEFAULT_STYLE, so a partial object from an older save still renders.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["size", "card", "hideElements", "advancedEnabled", "chartTitle", "xAxisLabel", "yAxisLabel", "dataLabels", "distribution", "misc"],
+      "properties": {
+        "size": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["preset"],
+          "properties": {
+            "preset": { "$ref": "#/$defs/StylingWidgetSize", "default": "Medium" },
+            "customWidth": { "type": "number", "default": 880, "description": "Honoured only when preset === 'Custom'." },
+            "customHeight": { "type": "number", "default": 400, "description": "Honoured only when preset === 'Custom'." },
+            "lockAspectRatio": { "type": "boolean", "default": false }
+          }
+        },
+        "card": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["wrapInCard", "backgroundColor", "borderColor", "borderWidth", "borderRadius"],
+          "properties": {
+            "wrapInCard": { "type": "boolean", "default": true },
+            "backgroundColor": { "type": "string", "default": "#FFFFFF" },
+            "borderColor": { "type": "string", "default": "#EEEEEE" },
+            "borderWidth": { "type": "number", "default": 1 },
+            "borderRadius": { "type": "number", "default": 8 }
+          }
+        },
+        "hideElements": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["settingsIcon", "exportIcon", "infoIcon", "fixedTimeText", "chartTitle"],
+          "description": "false = visible. When the title and every icon are hidden the widget collapses its header entirely so the chart fills the full height.",
+          "properties": {
+            "settingsIcon": { "type": "boolean", "default": false },
+            "exportIcon": { "type": "boolean", "default": false },
+            "infoIcon": { "type": "boolean", "default": false, "description": "The info icon is additionally auto-hidden when the active chart has no `description`." },
+            "fixedTimeText": { "type": "boolean", "default": false, "description": "Hides the fixed/global time caption under the title. Only offered in the Style tab when the Time tab is in FIXED mode; the window is still resolved and fetched either way." },
+            "chartTitle": { "type": "boolean", "default": false }
+          }
+        },
+        "advancedEnabled": { "type": "boolean", "default": false },
+        "chartTitle": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["fontSize", "fontColor", "fontWeight"],
+          "properties": {
+            "fontSize": { "type": "number", "default": 18 },
+            "fontColor": { "type": "string", "default": "#050505" },
+            "fontWeight": { "$ref": "#/$defs/StylingFontWeight", "default": "Semi-Bold" }
+          }
+        },
+        "xAxisLabel": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["textColor", "lineColor", "dataPointColor"],
+          "properties": {
+            "textColor": { "type": "string", "default": "#7a88b0" },
+            "lineColor": { "type": "string", "default": "#DEE1E3" },
+            "dataPointColor": { "type": "string", "default": "#7a88b0" }
+          }
+        },
+        "yAxisLabel": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["textColor", "lineColor", "dataPointColor"],
+          "properties": {
+            "textColor": { "type": "string", "default": "#7a88b0" },
+            "lineColor": { "type": "string", "default": "#333333" },
+            "dataPointColor": { "type": "string", "default": "#7a88b0" }
+          }
+        },
+        "dataLabels": {
+          "description": "Frequency labels drawn INSIDE each bar.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["color", "fontSize"],
+          "properties": {
+            "color": { "type": "string", "default": "#FFFFFF" },
+            "fontSize": { "type": "number", "default": 11 }
+          }
+        },
+        "distribution": {
+          "description": "Legacy single normal-distribution overlay. Used only when the active chart has no `distributionLines`.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["color", "width", "dashStyle"],
+          "properties": {
+            "color": { "type": "string", "default": "#FF6B6B" },
+            "width": { "type": "number", "default": 3 },
+            "dashStyle": { "$ref": "#/$defs/HighchartsDashStyle", "default": "Solid" }
+          }
+        },
+        "misc": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["gridLineColor", "legendTextColor"],
+          "properties": {
+            "gridLineColor": { "type": "string", "default": "#e5e9f2" },
+            "legendTextColor": { "type": "string", "default": "#3b4560" }
+          }
+        }
+      }
+    },
+    "StylingFontWeight": { "enum": ["Regular", "Medium", "Semi-Bold", "Bold"] },
+    "StylingWidgetSize": { "enum": ["Small", "Medium", "Large", "Custom"] },
+
+    "HostTimeConfig": {
+      "description": "The RUNTIME time config the host passes to the widget as props.timeConfig, and what the configurator writes to envelope.timeConfig via toHostTimeConfig(). RICH shape (mirrors the line chart) — carries the full duration roster + default periodicity + picker mode so the widget can rebuild the date picker and derive the initial window/periodicity after save + refresh. The host does NOT pass the raw SDK timeTabConfig.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["timezone", "cycleTime", "shifts"],
+      "properties": {
+        "type": {
+          "enum": ["local", "fixed"],
+          "description": "Engine-facing mode. 'global' is NORMALIZED to 'local' here — read pickerType for the user's actual choice."
+        },
+        "pickerType": { "$ref": "#/$defs/GTPTimeType", "description": "The user's actual picker choice, including 'global'." },
+        "startTime": { "type": ["number", "null"], "default": null, "description": "Emitted as null — the host/widget derive the live window from allDurations + defaultDurationId." },
+        "endTime": { "type": ["number", "null"], "default": null },
+        "fixedDuration": {
+          "anyOf": [{ "$ref": "#/$defs/HostDefaultDuration" }, { "type": "object" }, { "type": "null" }],
+          "description": "Set only when pickerType === 'fixed' — the resolved Set Duration expression. The widget renders its `name` + periodicity as the fixed-time caption."
+        },
+        "defaultDurationId": { "type": "string" },
+        "allDurations": { "type": "array", "items": { "$ref": "#/$defs/HostDefaultDuration" } },
+        "defaultPeriodicity": { "type": "string", "description": "Lowercased. In fixed mode this is the periodicity picked in Set Duration; otherwise the TimeTab default." },
+        "timezone": { "type": "string" },
+        "defaultDuration": { "$ref": "#/$defs/HostDefaultDuration", "deprecated": true, "description": "The host derives the window from allDurations + defaultDurationId." },
+        "cycleTime": {
+          "anyOf": [{ "$ref": "#/$defs/HostCycleTime" }, { "type": "null" }],
+          "description": "MUST NOT be undefined — the host's calculateTimeRange() reads cycleTime.hour unconditionally. hostSafeTimeTab() guarantees this."
+        },
+        "shifts": { "type": "array", "description": "Emitted empty — the histogram does not use shift bucketing.", "items": {} },
+        "shiftAggregator": { "type": "string" },
+        "comparisonMode": { "type": "boolean" },
+        "deviationPattern": { "type": "string" }
+      }
+    },
+    "HostCycleTime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["hour", "minute", "dayOfWeek", "date", "month"],
+      "properties": {
+        "identifier": { "type": "string" },
+        "hour": { "type": "string", "description": "Never null — see HostTimeConfig.cycleTime." },
+        "minute": { "type": "string" },
+        "dayOfWeek": { "type": "number" },
+        "date": { "type": "string" },
+        "month": { "type": "string" },
+        "year": { "type": "string" }
+      }
+    },
+    "HostDefaultDuration": {
+      "description": "A FULLY-RESOLVED duration expression. calculateTimeRange() reads navigation/x/xPeriod/xEvent/y/yPeriod/yEvent unconditionally, so none may be missing.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "label", "navigation", "x", "xPeriod", "xEvent", "y", "yPeriod", "yEvent"],
+      "properties": {
+        "id": { "type": "string" },
+        "label": { "type": "string" },
+        "calendarType": { "type": "string" },
+        "isBuiltIn": { "type": "boolean" },
+        "navigation": { "enum": ["Previous", "Next"] },
+        "x": { "type": "number" },
+        "xPeriod": { "type": "string" },
+        "xEvent": { "type": "string" },
+        "y": { "type": "number" },
+        "yPeriod": { "type": "string" },
+        "yEvent": { "type": "string" },
+        "periodicities": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+
+    "TimeTabUIConfig": {
+      "description": "Mirrors the design-sdk TimeTabConfiguration's emitted shape. STATIC envelope config — never bindable, never in dynamicBindingPathList. startTime/endTime are widget/engine-owned (the SDK's own type carries no absolute timestamps).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["timezone", "defaultDurationId", "allDurations", "defaultPeriodicity"],
+      "properties": {
+        "linkTimeWith": { "$ref": "#/$defs/GTPTimeType" },
+        "timezone": { "type": "string" },
+        "timeType": { "$ref": "#/$defs/GTPTimeType", "deprecated": true, "description": "Superseded by linkTimeWith — kept for back-compat with older saves." },
+        "defaultDurationId": { "type": "string" },
+        "allDurations": { "type": "array", "items": { "$ref": "#/$defs/GTPPreset" } },
+        "defaultPeriodicity": { "enum": ["minute", "hourly", "daily", "weekly", "monthly"] },
+        "disablePeriodicities": { "type": "boolean" },
+        "comparisonMode": { "type": "boolean" },
+        "deviationPattern": { "$ref": "#/$defs/GTPDeviationPattern" },
+        "allowPerSourceIndicator": { "type": "boolean" },
+        "sourceDeviationOverrides": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/GTPDeviationPattern" }
+        },
+        "futureDaysAllowed": { "type": "string" },
+        "shifts": { "type": "array", "items": { "$ref": "#/$defs/GTPShift" } },
+        "shiftAggregator": { "type": "string" },
+        "cycleTime": { "$ref": "#/$defs/GTPCycleTimeConfig" },
+        "fixed": { "$ref": "#/$defs/GTPFixedSettings" },
+        "global": { "$ref": "#/$defs/GTPGlobalSettings" },
+        "startTime": {
+          "type": ["number", "null"],
+          "description": "Pinned at save time for fixed mode so the host fetch isn't zero-width; null for local/global, which derive their window live."
+        },
+        "endTime": { "type": ["number", "null"] }
+      }
+    },
+    "GTPPeriod": { "enum": ["minute", "hour", "day", "week", "month", "year"] },
+    "GTPTimeType": { "enum": ["fixed", "local", "global"] },
+    "GTPNavigation": { "enum": ["Previous", "Current", "Next"] },
+    "GTPEvent": { "enum": ["Start", "Now", "End"] },
+    "GTPDeviationPattern": { "enum": ["green-up-positive", "red-up-positive"] },
+    "GTPPreset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "label"],
+      "properties": {
+        "id": { "type": "string" },
+        "label": { "type": "string" },
+        "x": { "type": "number" },
+        "xPeriod": { "$ref": "#/$defs/GTPPeriod" },
+        "calendarType": { "enum": ["today", "yesterday", "current_week", "previous_week", "current_month", "previous_month", "current_year", "previous_year"] },
+        "isBuiltIn": { "type": "boolean" },
+        "navigation": { "$ref": "#/$defs/GTPNavigation" },
+        "xEvent": { "$ref": "#/$defs/GTPEvent" },
+        "y": { "type": "number" },
+        "yPeriod": { "$ref": "#/$defs/GTPPeriod" },
+        "yEvent": { "$ref": "#/$defs/GTPEvent" },
+        "periodicities": { "type": "array", "items": { "type": "string" } },
+        "hidden": { "type": "boolean" }
+      }
+    },
+    "GTPShift": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "startTime", "endTime", "color"],
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "startTime": { "type": "string" },
+        "endTime": { "type": "string" },
+        "color": { "type": "string" }
+      }
+    },
+    "GTPCycleTimeType": { "enum": ["calendar", "financial", "custom"] },
+    "GTPCycleTimeConfig": {
+      "description": "Redefines where each period BEGINS, e.g. a 'day' that starts at 06:00, a 'week' that starts on Wednesday.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cycleTimeType", "identifier", "hour", "minute", "dayOfWeek", "date", "month", "year"],
+      "properties": {
+        "cycleTimeType": { "$ref": "#/$defs/GTPCycleTimeType", "default": "calendar" },
+        "identifier": { "enum": ["start", "end"], "default": "start" },
+        "hour": { "type": "string", "default": "00" },
+        "minute": { "type": "string", "default": "00" },
+        "dayOfWeek": { "type": ["number", "null"], "default": 0 },
+        "date": { "type": "string", "default": "01" },
+        "month": { "type": "string", "default": "January" },
+        "year": { "type": "string", "default": "" }
+      }
+    },
+    "GTPFixedDuration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "navigation", "x", "xPeriod", "xEvent", "y", "yPeriod", "yEvent", "periodicity"],
+      "properties": {
+        "name": { "type": "string", "description": "The Set Duration label. The widget renders it as '<name> · <periodicity>' in the fixed-time caption." },
+        "navigation": { "$ref": "#/$defs/GTPNavigation" },
+        "x": { "type": "string" },
+        "xPeriod": { "$ref": "#/$defs/GTPPeriod" },
+        "xEvent": { "$ref": "#/$defs/GTPEvent" },
+        "y": { "type": "string" },
+        "yPeriod": { "$ref": "#/$defs/GTPPeriod" },
+        "yEvent": { "$ref": "#/$defs/GTPEvent" },
+        "periodicity": { "type": "string" }
+      }
+    },
+    "GTPFixedSettings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["timezone", "cycleTime", "duration", "disablePeriodicities", "shifts", "shiftAggregator", "comparisonMode", "deviationPattern", "allowPerSourceIndicator", "sourceDeviationOverrides", "futureDaysAllowed"],
+      "properties": {
+        "timezone": { "type": "string" },
+        "cycleTime": { "$ref": "#/$defs/GTPCycleTimeConfig" },
+        "duration": { "$ref": "#/$defs/GTPFixedDuration" },
+        "disablePeriodicities": { "type": "boolean" },
+        "shifts": { "type": "array", "items": { "$ref": "#/$defs/GTPShift" } },
+        "shiftAggregator": { "type": "string" },
+        "comparisonMode": { "type": "boolean" },
+        "deviationPattern": { "$ref": "#/$defs/GTPDeviationPattern" },
+        "allowPerSourceIndicator": { "type": "boolean" },
+        "sourceDeviationOverrides": { "type": "object", "additionalProperties": { "$ref": "#/$defs/GTPDeviationPattern" } },
+        "futureDaysAllowed": { "type": "string" }
+      }
+    },
+    "GTPGlobalSettings": {
+      "description": "Per-widget settings when the picker is set to Global — the rest is inherited from the selected GTPGlobalTimepicker, looked up via globalTimepickerId, never stored here. The configurator snapshots the GTP's durations into allDurations at save time (adoptGtpSnapshot) so the widget can render the picker without the GTP.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["globalTimepickerId", "comparisonMode", "deviationPattern", "allowPerSourceIndicator", "sourceDeviationOverrides", "futureDaysAllowed"],
+      "properties": {
+        "globalTimepickerId": { "type": "string" },
+        "comparisonMode": { "type": "boolean" },
+        "deviationPattern": { "$ref": "#/$defs/GTPDeviationPattern" },
+        "allowPerSourceIndicator": { "type": "boolean" },
+        "sourceDeviationOverrides": { "type": "object", "additionalProperties": { "$ref": "#/$defs/GTPDeviationPattern" } },
+        "futureDaysAllowed": { "type": "string" }
+      }
+    },
+
+    "DataEntry": {
+      "description": "What the widget receives on its `data` prop. `key` matches a dynamicBindingPathList entry's key EXACTLY, e.g. 'charts[0].dataSources[1].unsPath'. For the Histogram every value is a SeriesPayload (or null) — the widget bins slots[] client-side.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "value"],
+      "properties": {
+        "key": { "type": "string" },
+        "value": {
+          "oneOf": [
+            { "type": "string" },
+            { "type": "number" },
+            { "type": "null" },
+            { "$ref": "#/$defs/SeriesPayload" }
+          ]
+        }
+      }
+    },
+    "SeriesPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["__type", "path", "meta", "range", "slots"],
+      "properties": {
+        "__type": { "const": "series" },
+        "path": { "type": "string" },
+        "meta": { "$ref": "#/$defs/SeriesMeta" },
+        "range": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["from", "to"],
+          "properties": { "from": { "type": "number" }, "to": { "type": "number" } }
+        },
+        "slots": { "type": "array", "items": { "$ref": "#/$defs/SeriesSlot" } },
+        "comparisonSlots": {
+          "type": "array",
+          "description": "Previous-period buckets returned by resolveAndCompute in comparison mode (index-aligned to `slots`). Present only when comparisonStartTime/End were sent.",
+          "items": { "$ref": "#/$defs/SeriesSlot" }
+        }
+      }
+    },
+    "SeriesMeta": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "key", "unit", "dataPrecision", "aggregation", "devID", "sensor"],
+      "properties": {
+        "type": { "type": "string" },
+        "key": { "type": "string" },
+        "unit": { "type": ["string", "null"] },
+        "dataPrecision": { "type": ["number", "null"] },
+        "aggregation": { "$ref": "#/$defs/SeriesAggregation" },
+        "devID": { "type": "string" },
+        "sensor": { "type": "string" }
+      }
+    },
+    "SeriesAggregation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["operator", "downscale", "resolution"],
+      "properties": {
+        "operator": { "type": "string" },
+        "downscale": { "type": "number" },
+        "resolution": { "type": "string" }
+      }
+    },
+    "SeriesSlot": {
+      "description": "One time bucket. The widget maps each non-null slot to a {time: from, value} point and bins it by VALUE — `label`/`quality` are unused by the histogram.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["from", "to", "label", "value", "quality"],
+      "properties": {
+        "from": { "type": "number" },
+        "to": { "type": "number" },
+        "label": { "type": "string" },
+        "value": { "type": ["number", "null"], "description": "null slots are DROPPED before binning." },
+        "quality": { "type": "string" },
+        "isPartial": { "type": "boolean" }
+      }
+    },
+
+    "WidgetEvent": {
+      "description": "Widget → host. The Histogram emits TIME_CHANGE whenever the user changes the date range or periodicity in local mode, so the host DataLayer refetches.",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "payload"],
+          "properties": {
+            "type": { "const": "TIME_CHANGE" },
+            "payload": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["startTime", "endTime", "periodicity"],
+              "properties": {
+                "startTime": { "type": "string", "description": "ms epoch as a string." },
+                "endTime": { "type": "string" },
+                "periodicity": { "type": "string", "description": "Lowercased." },
+                "comparisonStartTime": { "type": "string", "description": "Comparison mode — previous-period window; the backend returns comparisonSlots in the same resolveAndCompute call." },
+                "comparisonEndTime": { "type": "string" }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "payload"],
+          "properties": {
+            "type": { "const": "FILTER_CHANGE" },
+            "payload": { "type": "object" }
+          }
+        }
+      ]
+    }
+  }
+}

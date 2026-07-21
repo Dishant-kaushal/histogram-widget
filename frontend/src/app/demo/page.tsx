@@ -70,7 +70,7 @@ const UI: HistogramUIConfig = {
   style: {
     size: { preset: 'Large', customWidth: 1400, customHeight: 480 },
     card: { wrapInCard: true, backgroundColor: '#FFFFFF', borderColor: '#EEEEEE', borderWidth: 1, borderRadius: 8 },
-    hideElements: { settingsIcon: false, exportIcon: false, chartTitle: false },
+    hideElements: { settingsIcon: false, exportIcon: false, infoIcon: false, fixedTimeText: false, chartTitle: false },
     advancedEnabled: false,
     chartTitle: { fontSize: 18, fontColor: '#050505', fontWeight: 'Semi-Bold' },
     xAxisLabel: { textColor: '#7a88b0', lineColor: '#DEE1E3', dataPointColor: '#7a88b0' },

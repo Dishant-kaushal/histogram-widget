@@ -24,6 +24,13 @@ import {
 interface Props {
   timeTabConfig?: TimeTabUIConfig;
   onEvent?: (e: WidgetEvent) => void;
+  /** Disable (grey out, but keep visible) the periodicity dropdown — cumulative
+   *  mode doesn't use it. The widget still emits the current periodicity so the
+   *  data query stays valid. */
+  disablePeriodicity?: boolean;
+  /** Hide the fixed/global caption entirely (Style-tab toggle). The window is
+   *  still resolved + fetched; only the on-chart text is suppressed. */
+  hideFixedTime?: boolean;
 }
 
 /** Emit TIME_CHANGE(startTime,endTime,periodicity) so the host DataLayer refetches. */
@@ -43,7 +50,7 @@ function emitTimeChange(
   });
 }
 
-export function HistogramTimeBar({ timeTabConfig, onEvent }: Props) {
+export function HistogramTimeBar({ timeTabConfig, onEvent, disablePeriodicity = false, hideFixedTime = false }: Props) {
   const mode = timeMode(timeTabConfig);
 
   const initialRange = useMemo<DateRange>(() => {
@@ -93,15 +100,23 @@ export function HistogramTimeBar({ timeTabConfig, onEvent }: Props) {
   // reads the periodicity straight off the config's Set Duration expression so it
   // stays in sync as the user edits it.
   if (mode !== 'local') {
-    // Read the periodicity from the config (handles both the SDK + rich host
-    // shapes) — NOT the `periodicity` state, which the range effect above rewrites
-    // to fit the fixed window's span and would show e.g. "Daily" instead of the
-    // "Weekly" the user picked in Set Duration.
+    // Style-tab toggle hides the caption entirely (the window is still fetched).
+    if (hideFixedTime) return null;
+    // Fixed caption = "<Set Duration name> · <periodicity>" (e.g. "Last Month ·
+    // Weekly"). The name comes from the Set Duration form (fixed.duration.name /
+    // rich fixedDuration.name); the periodicity is the one picked there.
+    const fd = (timeTabConfig as { fixed?: { duration?: { name?: string } }; fixedDuration?: { name?: string } } | undefined);
+    const fixedName = (fd?.fixed?.duration?.name ?? fd?.fixedDuration?.name ?? '').trim();
     const fixedPeriodicity = defaultPeriodicity(timeTabConfig);
-    const label = mode === 'fixed' ? `Fixed: ${fixedPeriodicity}` : 'Linked to Global Time Picker';
+    const label =
+      mode === 'fixed'
+        ? fixedName
+          ? `${fixedName} · ${fixedPeriodicity}`
+          : `Fixed · ${fixedPeriodicity}`
+        : 'Linked to Global Time Picker';
     return (
       <div className="histogram-widget__timebar">
-        <span className="histogram-widget__fixed-time">
+        <span className="histogram-widget__fixed-time BodySmallMedium">
           <Clock size={14} />
           <span>{label}</span>
         </span>
@@ -155,26 +170,26 @@ export function HistogramTimeBar({ timeTabConfig, onEvent }: Props) {
       />
 
       {/* Periodicity — a separate control pinned to the right edge (matches the
-          Column/Line chart filters row and the Figma). */}
+          Column/Line chart filters row and the Figma). Disabled in cumulative mode. */}
       <div className="histogram-widget__periodicity">
-        <SelectInput label="" value={periodicity} placeholder="Periodicity" isOpen={pOpen} onClick={() => setPOpen((o) => !o)}>
-          <DropdownMenu>
-            {periodicityOptions.map((opt) => (
-              <ActionListItem
-                key={opt}
-                title={opt}
-                selectionType="Single"
-                isSelected={opt === periodicity}
-                onClick={() => {
-                  touchedRef.current = true;
-                  setPeriodicity(opt);
-                  setPOpen(false);
-                  emitTimeChange(onEvent, rangeValue.start.getTime(), rangeValue.end.getTime(), opt);
-                }}
-              />
-            ))}
-          </DropdownMenu>
-        </SelectInput>
+          <SelectInput label="" value={periodicity} placeholder="Periodicity" isDisabled={disablePeriodicity} isOpen={pOpen} onClick={disablePeriodicity ? undefined : () => setPOpen((o) => !o)}>
+            <DropdownMenu>
+              {periodicityOptions.map((opt) => (
+                <ActionListItem
+                  key={opt}
+                  title={opt}
+                  selectionType="Single"
+                  isSelected={opt === periodicity}
+                  onClick={() => {
+                    touchedRef.current = true;
+                    setPeriodicity(opt);
+                    setPOpen(false);
+                    emitTimeChange(onEvent, rangeValue.start.getTime(), rangeValue.end.getTime(), opt);
+                  }}
+                />
+              ))}
+            </DropdownMenu>
+          </SelectInput>
       </div>
     </div>
   );

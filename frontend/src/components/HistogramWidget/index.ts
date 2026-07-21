@@ -89,7 +89,6 @@ function HistogramWidgetDataLayer(props: WidgetProps) {
   const timeTabConfig = (props.timeTabConfig ??
     (props.timeConfig as TimeTabUIConfig | undefined) ??
     envelope?.timeTabConfig) as TimeTabUIConfig | undefined;
-  console.log('[HistogramWidgetDataLayer]', { hostMode, entries: data.length, charts: (uiConfig as HistogramUIConfig)?.charts?.length ?? 0 });
 
   return React.createElement(HistogramWidget, {
     config: uiConfig,

@@ -13,7 +13,7 @@
   border: 1px solid #e5e9f2;
   border-radius: 12px;
   padding: 16px;
-  gap:14px;
+  gap: 8px;
   box-sizing: border-box;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
@@ -31,7 +31,9 @@
      action icons in the Style tab never collapses the row and shifts the chart up. */
   min-height: 32px;
   flex-shrink: 0;
-  margin-bottom: 8px;
+  /* No margin-bottom — the widget root's flex `gap` owns the vertical rhythm, so
+     header/timebar/chart are evenly spaced (a margin here doubled the gap below
+     these rows and made the layout feel off vs. the SDK). */
 }
 
 /* Time controls row (DatePicker on the left + periodicity pinned right).
@@ -45,6 +47,9 @@
   overflow: hidden;
   flex-wrap: wrap;
   flex-shrink: 0;
+  /* Extra breathing room before the chart — the root's 8px gap alone left the
+     time controls sitting too close to the plot. (Title↔time stays tight since
+     that's the header→timebar gap, not this margin.) */
   margin-bottom: 8px;
 }
 /* Periodicity dropdown sits at the far right edge of the toolbar row. */
@@ -52,23 +57,23 @@
   margin-left: auto;
   flex-shrink: 0;
 }
-/* Fixed / global time caption — a subtle clock-icon + text (no bordered chip). */
+/* Fixed / global time caption — a subtle clock-icon + text (no bordered chip).
+   Font comes from the SDK `BodySmallMedium` class on the element; we only add the
+   layout + a muted SDK token color here. */
 .histogram-widget__fixed-time {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  color: #6b7280;
+  gap: var(--spacing-02, 6px);
+  color: var(--text-default-secondary, #6b7280);
 }
 .histogram-widget__fixed-time svg {
-  color: #6b7280;
+  color: var(--text-default-secondary, #6b7280);
   flex-shrink: 0;
 }
 
+/* Font/size/weight come from the SDK `HeadingSmallSemibold` class + the config's
+   inline titleStyle; this rule only handles the ellipsis truncation. */
 .histogram-widget__title {
-  font-size: 14px;
-  font-weight: 600;
-  color: #3b4560;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -257,18 +262,32 @@
 }
 
 /* Wrapper that gives the SDK ColumnChart/LineChart a sized container to fill.
-   min-width:0 lets it shrink so the SDK chart reflows to narrow widths. */
+   min-width:0 lets it shrink so the SDK chart reflows to narrow widths.
+   min-height:0 (NOT a 260px floor) lets the chart shrink WITH the widget when its
+   height is reduced — with a floor the content couldn't shrink past ~400px tall and
+   the root's overflow:hidden cropped the legend/chart instead of resizing them. */
 .histogram-widget__chart {
   width: 100%;
   min-width: 0;
   flex: 1 1 auto;
-  min-height: 260px;
+  min-height: 0;
+}
+/* The SDK chart's own viewport paints an opaque surface color
+   (--background-surface-intense, white) that hid the widget's configurable
+   background behind the plot. Make it transparent so the Style-tab background
+   color shows through the whole widget (Highcharts' own bg is set transparent
+   via chart.backgroundColor in applyChartStyle). */
+.histogram-widget__chart .fds-column-chart__viewport,
+.histogram-widget__chart .fds-combo-line-chart__viewport,
+.histogram-widget__chart .fds-line-chart__viewport {
+  background-color: transparent;
 }
 
 .histogram-widget__loading,
 .histogram-widget__empty {
   height: 100%;
-  min-height: 320px;
+  min-height: 0;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   align-items: center;

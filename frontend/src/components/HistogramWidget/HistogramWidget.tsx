@@ -66,7 +66,7 @@ interface HistogramWidgetProps {
 const DEFAULT_STYLE: HistogramStyling = {
   size: { preset: 'Medium', customWidth: 880, customHeight: 400, lockAspectRatio: false },
   card: { wrapInCard: true, backgroundColor: '#FFFFFF', borderColor: '#EEEEEE', borderWidth: 1, borderRadius: 8 },
-  hideElements: { settingsIcon: false, exportIcon: false, chartTitle: false },
+  hideElements: { settingsIcon: false, exportIcon: false, infoIcon: false, fixedTimeText: false, chartTitle: false },
   advancedEnabled: false,
   chartTitle: { fontSize: 18, fontColor: '#050505', fontWeight: 'Semi-Bold' },
   xAxisLabel: { textColor: '#7a88b0', lineColor: '#DEE1E3', dataPointColor: '#7a88b0' },
@@ -162,10 +162,17 @@ type ChartModel =
 
 export const HistogramWidget: React.FC<HistogramWidgetProps> = ({ config, data, loading, timeTabConfig, onEvent }) => {
   // Shared styling lives at the widget level; each chart carries its own data.
-  const style: HistogramStyling = { ...DEFAULT_STYLE, ...((config as Partial<HistogramUIConfig>)?.style ?? {}) };
+  // Memoize on `config` so an INTERNAL re-render (menu open, legend toggle, etc.)
+  // reuses the same object references — otherwise `style`/`charts` (and therefore
+  // `cfg`, the `model` memo, and the chart options) rebuild every render and the
+  // SDK chart redraws needlessly on every interaction.
+  const style: HistogramStyling = useMemo(
+    () => ({ ...DEFAULT_STYLE, ...((config as Partial<HistogramUIConfig>)?.style ?? {}) }),
+    [config],
+  );
   // A widget holds a list of charts and renders the ACTIVE one. `previewChartId`
   // is a runtime-only override (the in-widget title switcher) — never persisted.
-  const charts = resolveCharts(config);
+  const charts = useMemo(() => resolveCharts(config), [config]);
   // Whether the host config carries a REAL chart (vs. resolveCharts' fallback
   // default). Used to keep the header title blank until the user adds a chart.
   const hasRealChart = ((): boolean => {
@@ -243,10 +250,15 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({ config, data, 
   }, [fixedKey]);
   // Header menus (info / chart-settings / more), one open at a time.
   const [openMenu, setOpenMenu] = useState<'info' | 'settings' | 'more' | null>(null);
-  // Track fullscreen so the export menu can offer "Exit full screen".
+  // Track fullscreen so the export menu can offer "Exit full screen". We can't
+  // compare against rootElRef — in the host the widget lives in a shadow root and
+  // `document.fullscreenElement` returns the retargeted shadow host, never our
+  // inner element. Fullscreen is exclusive per document and we're the one toggling
+  // it, so a non-null fullscreenElement means we're the fullscreen widget. This
+  // also flips back correctly when the user leaves via Esc.
   const [isFullscreen, setIsFullscreen] = useState(false);
   useEffect(() => {
-    const onFsChange = () => setIsFullscreen(document.fullscreenElement === rootElRef.current);
+    const onFsChange = () => setIsFullscreen(!!document.fullscreenElement);
     document.addEventListener('fullscreenchange', onFsChange);
     return () => document.removeEventListener('fullscreenchange', onFsChange);
   }, []);
@@ -300,7 +312,9 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({ config, data, 
       if (!Number.isFinite(min) || !Number.isFinite(max)) return [];
       // Pad a degenerate (all-equal) range so createGroups yields a usable bin.
       if (max <= min) max = min + Math.max(1, Math.abs(min) * 0.1);
-      return createGroups(min, max, 10).map(([start, end]) => ({ start, end }));
+      // TWO default bins, split at the data's midpoint (design-team request) — a
+      // sensible starting point the user can refine in the Bin Range accordion.
+      return createGroups(min, max, 2).map(([start, end]) => ({ start, end }));
     };
     if (configBins.length === 0) return autoBins();
     const anyInBin = values.some((v) =>
@@ -356,13 +370,17 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({ config, data, 
     onEvent?.({ type: 'FILTER_CHANGE', payload: { drilldown: false } });
   };
 
-  const plotLines: ChartPlotLine[] | undefined = cfg.showPlotLines
-    ? toChartPlotLines(cfg, (pi) => {
-        // Dynamic plot line — latest resolved value of the bound topic.
-        const pts = slotsToPoints(getSeriesData(`charts[${chartIndex}].plotLines[${pi}].unsPath`, data));
-        return pts.length ? pts[pts.length - 1].value : undefined;
-      })
-    : undefined;
+  const plotLines: ChartPlotLine[] | undefined = useMemo(
+    () =>
+      cfg.showPlotLines
+        ? toChartPlotLines(cfg, (pi) => {
+            // Dynamic plot line — latest resolved value of the bound topic.
+            const pts = slotsToPoints(getSeriesData(`charts[${chartIndex}].plotLines[${pi}].unsPath`, data));
+            return pts.length ? pts[pts.length - 1].value : undefined;
+          })
+        : undefined,
+    [cfg, data, chartIndex],
+  );
 
   // Bin-range x-axis labels come from the Style tab toggle.
   // Bin ranges (e.g. "0 - 1000") are always shown on the x-axis (the toggle was removed).
@@ -416,19 +434,26 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({ config, data, 
       let categories: string[] = [];
       const series: ColumnSeries[] = [];
       const seriesMeta: ClickTarget[] = [];
+      // Per-series bin label (index-aligned to `series`) so the TOOLTIP can name the
+      // exact bin/range of the hovered bar even though the LEGEND only shows the
+      // data source. Keeps the legend clean while each bar's tooltip stays specific.
+      const seriesBinLabel: string[] = [];
       sources.forEach((src, sourceIdx) => {
         const grouping = dailyBinCounts(sourcePoints[sourceIdx] ?? [], bins, cfg.includeStartEnd);
         if (grouping.categories.length > categories.length) categories = grouping.categories;
+        const srcName = src.name || `Source ${sourceIdx + 1}`;
         bins.forEach((bin, binIdx) => {
-          const name = hasBinName(bin.binName)
-            ? bin.binName!
-            : `Bin ${binIdx + 1}${showRanges ? ` (${bin.start} - ${bin.end})` : ''}`;
           series.push({
-            name: sources.length > 1 ? `${src.name || `Source ${sourceIdx + 1}`}: ${name}` : name,
+            // Legend shows just the DATA SOURCE (one entry per source) — not each
+            // "Bin N (x - y)" range, which cluttered it with long float ranges.
+            name: srcName,
             data: grouping.perBin[binIdx] ?? [],
             color: bin.color || src.color || binColor(sourceIdx),
+            showInLegend: binIdx === 0,
           });
           seriesMeta.push({ sourceIdx, binIdx });
+          const binName = hasBinName(bin.binName) ? bin.binName! : `Bin ${binIdx + 1}`;
+          seriesBinLabel.push(`${binName} (${binLabel(bin, binIdx, true)})`);
         });
       });
       return {
@@ -436,17 +461,48 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({ config, data, 
         categories,
         series,
         showLegend: viewLegend ?? true,
-        xAxisTitle: 'Day',
+        xAxisTitle: '',
         resolveClick: (ctx) => seriesMeta[ctx.seriesIndex] ?? null,
         hcOptions: {
+          // Let Highcharts rotate the day/bucket labels to whatever fits (0 → -45 →
+          // -90) and skip any that still collide, so they never overlap for ANY
+          // periodicity (7 weekdays, 24 hours, weeks, months, …) or widget width.
+          xAxis: { labels: { autoRotation: [0, -20, -45, -70, -90] } },
           plotOptions: {
-            column: { borderWidth: 0, cursor: canDrill ? 'pointer' : undefined },
+            // minPointLength keeps EVERY bin visible in each day-group even when its
+            // count is 0 — otherwise a day whose values all land in one bin drops the
+            // other bins to zero-height and looks like it has fewer bins than its
+            // neighbours. Now every x-axis group shows the same set of bins.
+            column: { borderWidth: 0, minPointLength: 3, cursor: canDrill ? 'pointer' : undefined },
             series: { centerInCategory: true },
           },
           tooltip: {
             useHTML: true,
-            formatter: function (this: { key?: string; y?: number; series?: { name?: string } }): string {
-              return `<b>${this.key} ${this.series?.name}</b> : ${this.y}`;
+            // Each date column holds MULTIPLE bars (one per bin, ×sources), so use a
+            // SHARED tooltip that lists every bar for the hovered date — a per-point
+            // formatter would only ever name the single hovered bar.
+            shared: true,
+            formatter: function (this: {
+              x?: string | number;
+              points?: Array<{ y?: number; key?: string; category?: string; color?: string; series?: { name?: string; index?: number } }>;
+            }): string {
+              const pts = this.points ?? [];
+              if (!pts.length) return '';
+              const day = pts[0]?.category ?? pts[0]?.key ?? String(this.x ?? '');
+              const multiSource = sources.length > 1;
+              const header = `<b>${day}${!multiSource && sources[0]?.name ? ` · ${sources[0].name}` : ''}</b>`;
+              const rows = pts
+                .map((p) => {
+                  const idx = p.series?.index ?? -1;
+                  const label = seriesBinLabel[idx] ?? `Bin ${idx + 1}`;
+                  const prefix = multiSource && p.series?.name ? `${p.series.name} · ` : '';
+                  const swatch = p.color
+                    ? `<span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${p.color};margin-right:6px"></span>`
+                    : '';
+                  return `<div style="display:flex;align-items:center;gap:2px">${swatch}<span>${prefix}${label} : <b>${p.y ?? 0}</b></span></div>`;
+                })
+                .join('');
+              return `${header}${rows}`;
             },
           },
         } as Highcharts.Options,
@@ -455,7 +511,10 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({ config, data, 
 
     // ── Cumulative histogram (v1 §8.1) ──────────────────────────────────────
     const categories = barPoints.map((p) => binLabel(p.bin, p.binIdx, showRanges));
-    const manyBins = barPoints.length > 10;
+    // Bin-range labels ("X - Y") are wide, so rotate once there are more than a
+    // handful — the default auto-bin count is 10, which previously fell just under
+    // the old >10 threshold and left the labels horizontal + overlapping.
+    const manyBins = barPoints.length > 6;
     // Distribution overlay(s) — real combo LINE series (rendered via ComboLineChart),
     // one expected-count per bin, spline-smoothed. Named lines (Figma list) take
     // precedence; else the legacy single overlay styled by style.distribution.
@@ -595,6 +654,15 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({ config, data, 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cfg, barPoints, drill, sourcePoints, canDrill, style, showRanges, viewLabels, viewLegend, viewCumulative]);
 
+  // Final Highcharts options (model + Style-tab colors + axis side), memoized so
+  // the SDK chart receives a STABLE reference across re-renders that don't change
+  // the model/style — otherwise every interaction would hand it a fresh options
+  // object and force a full Highcharts redraw.
+  const chartOptions = useMemo(
+    () => applyChartStyle(model.hcOptions, style, !!rightAxis),
+    [model, style, rightAxis],
+  );
+
   // ── Export (v1 §10, alasql replaced with SheetJS/native CSV) ──────────────
 
   function buildExportRows(): Record<string, unknown>[] {
@@ -679,15 +747,33 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({ config, data, 
   // Legend is on by default in both modes (the SS shows the data-source legend).
   const legendDefaultOn = true;
   const wrapClass = `histogram-widget${style.card.wrapInCard ? '' : ' histogram-widget--bare'}`;
+  // Inline the box-model essentials so the widget occupies its full container from
+  // the FIRST paint — the bundle CSS (which carries the 760KB design-sdk stylesheet
+  // in the host shadow root) loads asynchronously, and relying on the .histogram-
+  // widget class for height/flex meant the widget briefly collapsed and then jumped
+  // to full height when the CSS landed. Inline styles apply before any stylesheet.
+  const baseWrapStyle: React.CSSProperties = {
+    width: '100%',
+    height: '100%',
+    display: 'flex',
+    flexDirection: 'column',
+    minWidth: 0,
+    minHeight: 0,
+    overflow: 'hidden',
+    boxSizing: 'border-box',
+    padding: 16,
+    gap: 8,
+  };
   const wrapStyle: React.CSSProperties = style.card.wrapInCard
     ? {
+        ...baseWrapStyle,
         background: style.card.backgroundColor,
         borderColor: style.card.borderColor,
         borderWidth: style.card.borderWidth,
         borderRadius: style.card.borderRadius,
         borderStyle: 'solid',
       }
-    : { background: 'transparent', border: 'none' };
+    : { ...baseWrapStyle, background: 'transparent', border: 'none' };
 
   const titleStyle: React.CSSProperties = {
     fontSize: style.chartTitle.fontSize,
@@ -695,32 +781,26 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({ config, data, 
     fontWeight: FONT_WEIGHT_MAP[style.chartTitle.fontWeight] ?? '600',
   };
 
-  // ── Render ─────────────────────────────────────────────────────────────────
+  // Whether the header row has anything to show. When the title is hidden AND no
+  // action icons render (settings/export hidden, no description) AND we're not in
+  // a drill, DON'T render the header at all so the chart claims the full height —
+  // an empty-but-reserved header left dead space at the top.
+  const showTitle = hasRealChart && !style.hideElements.chartTitle;
+  const showInfo = hasConfiguredSource && !style.hideElements.infoIcon && !!cfg.description?.trim();
+  const showActions =
+    !!drill || showInfo || (hasConfiguredSource && (!style.hideElements.settingsIcon || !style.hideElements.exportIcon));
+  const showHeader = showTitle || showActions;
 
-  // Diagnostic — surfaces why the widget may show an empty state in the host.
-  const allVals = sourcePoints.flat().map((p) => p.value);
-  console.log('[HistogramWidget] render', {
-    sources: sources.map((s) => ({ name: s.name, unsPath: s.unsPath })),
-    bins: bins.length,
-    configBins: configBins.length,
-    binRange: bins.length ? [bins[0].start, bins[bins.length - 1].end] : null,
-    valueRange: allVals.length ? [Math.min(...allVals), Math.max(...allVals)] : null,
-    pointCount: allVals.length,
-    boundCount: boundSources.length,
-    dataKeys: data.map((d) => d.key),
-    hasConfiguredSource,
-    hasAnyData,
-    hasAnyBins,
-    isLoading,
-  });
+  // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
     <div className={wrapClass} style={wrapStyle} ref={rootElRef}>
+      {showHeader && (
       <div className="histogram-widget__header">
         {style.hideElements.chartTitle || !hasRealChart ? (
           // No chart added yet (or title hidden in Style tab) → keep the header
           // empty; the reserved min-height stops the chart from shifting up.
-          <span className="histogram-widget__title" style={titleStyle} />
+          <span className="histogram-widget__title HeadingSmallSemibold" style={titleStyle} />
         ) : charts.length > 1 ? (
           <ChartTitleSwitcher
             charts={charts}
@@ -732,7 +812,7 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({ config, data, 
             }}
           />
         ) : (
-          <span className="histogram-widget__title" style={titleStyle}>
+          <span className="histogram-widget__title HeadingSmallSemibold" style={titleStyle}>
             {cfg.chartTitle || 'Histogram'}
           </span>
         )}
@@ -749,18 +829,23 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({ config, data, 
               are the SDK DropdownMenu, positioned under the icon group. */}
           <div className="histogram-widget__chart-actions">
             <ChartActions
+              // The Info tooltip shows the chart's own description (falls back to
+              // "Info"); the info icon only appears when a description is set.
+              infoLabel={cfg.description?.trim() || 'Info'}
               onInfoClick={
-                cfg.description?.trim()
+                showInfo
                   ? () => setOpenMenu((m) => (m === 'info' ? null : 'info'))
                   : undefined
               }
+              // Settings + export appear only once a data source is configured —
+              // an empty chart (chart added but no source yet) shows no controls.
               onSettingsClick={
-                style.hideElements.settingsIcon
+                !hasConfiguredSource || style.hideElements.settingsIcon
                   ? undefined
                   : () => setOpenMenu((m) => (m === 'settings' ? null : 'settings'))
               }
               onMoreClick={
-                style.hideElements.exportIcon
+                !hasConfiguredSource || style.hideElements.exportIcon
                   ? undefined
                   : () => setOpenMenu((m) => (m === 'more' ? null : 'more'))
               }
@@ -835,6 +920,7 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({ config, data, 
           </div>
         </div>
       </div>
+      )}
 
       {/* Time controls above the chart — local DatePicker+periodicity / fixed / global label.
           Falls back to a default local config so the picker shows even if the host
@@ -843,17 +929,29 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({ config, data, 
         <HistogramTimeBar
           timeTabConfig={effectiveTimeTab(timeTabConfig)}
           onEvent={onEvent}
+          // Cumulative bins the whole window's value distribution, so the per-bucket
+          // periodicity is meaningless there — disable the dropdown (kept visible).
+          disablePeriodicity={viewCumulative}
+          // Style-tab toggle to hide the "<name> · <periodicity>" fixed caption.
+          hideFixedTime={style.hideElements.fixedTimeText}
         />
       )}
 
-      <div className="histogram-widget__chart-area">
+      <div
+        className="histogram-widget__chart-area"
+        style={{ flex: 1, minHeight: 0, minWidth: 0, display: 'flex', flexDirection: 'column', position: 'relative' }}
+      >
         {!hasConfiguredSource && (
           <div className="histogram-widget__empty">
             <EmptyState
               size="Medium"
               illustration={<NoDataOneIllustration />}
-              title="Widget not configured"
-              description="Add a data source with a UNS topic and bins to see the histogram"
+              title={hasRealChart ? 'Data source not configured' : 'Widget not configured'}
+              description={
+                hasRealChart
+                  ? 'Add a data source with a UNS topic to this chart to see the histogram'
+                  : 'Add a chart, then a data source with a UNS topic to see the histogram'
+              }
             />
           </div>
         )}
@@ -889,7 +987,7 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({ config, data, 
 
         {hasConfiguredSource && !isLoading && hasAnyData && hasAnyBins && (
           <>
-          <div className="histogram-widget__chart">
+          <div className="histogram-widget__chart" style={{ flex: '1 1 auto', width: '100%', minWidth: 0, minHeight: 0 }}>
             {model.kind === 'column' && model.lineSeries && model.lineSeries.length > 0 ? (
               // Bars + distribution line(s) — the SDK combo chart renders mixed
               // column + line series natively (a plain ColumnChart drops extra
@@ -910,7 +1008,7 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({ config, data, 
                 plotLines={plotLines}
                 xAxisTitle={model.xAxisTitle}
                 yAxisTitle={yAxisTitle}
-                highchartsOptions={applyChartStyle(model.hcOptions, style, !!rightAxis)}
+                highchartsOptions={chartOptions}
                 onPointClick={
                   canDrill
                     ? (ctx: ChartPointClickContext) => {
@@ -932,7 +1030,7 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({ config, data, 
                 plotLines={plotLines}
                 xAxisTitle={model.xAxisTitle}
                 yAxisTitle={yAxisTitle}
-                highchartsOptions={applyChartStyle(model.hcOptions, style, !!rightAxis)}
+                highchartsOptions={chartOptions}
                 onPointClick={
                   canDrill
                     ? (ctx: ChartPointClickContext) => {
@@ -953,7 +1051,7 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({ config, data, 
                 showLegend={model.showLegend ?? false}
                 xAxisTitle={model.xAxisTitle}
                 yAxisTitle={yAxisTitle}
-                highchartsOptions={applyChartStyle(model.hcOptions, style, !!rightAxis)}
+                highchartsOptions={chartOptions}
                 onChartReady={(inst: Highcharts.Chart) => {
                   chartInstance.current = inst;
                 }}
@@ -992,7 +1090,7 @@ function ChartTitleSwitcher({
         {/* titleStyle on the span (not the button) so the switcher title matches
             the single-chart title size — the .histogram-widget__title CSS font-size
             would otherwise shrink it. */}
-        <span className="histogram-widget__title" style={titleStyle}>{activeChart.chartTitle || 'Histogram'}</span>
+        <span className="histogram-widget__title HeadingSmallSemibold" style={titleStyle}>{activeChart.chartTitle || 'Histogram'}</span>
         <ChevronDown size={16} />
       </button>
       {open && (
@@ -1032,6 +1130,13 @@ function applyChartStyle(opts: Highcharts.Options, style: HistogramStyling, oppo
   const legend = (opts.legend ?? {}) as Highcharts.LegendOptions;
   return {
     ...opts,
+    // Uniform outer spacing — Highcharts defaults to spacingBottom:15 vs spacingTop:10,
+    // so the gap below the chart (x-axis labels + legend) always looked larger than
+    // the top/side padding. Even spacing makes the widget's padding read as uniform.
+    // `backgroundColor: transparent` lets the widget's own (configurable) background
+    // show through — otherwise Highcharts paints its default white behind everything,
+    // ignoring the Style-tab background color.
+    chart: { ...opts.chart, spacing: [8, 8, 8, 8], backgroundColor: 'transparent' },
     xAxis: {
       ...x,
       lineColor: style.xAxisLabel.lineColor,

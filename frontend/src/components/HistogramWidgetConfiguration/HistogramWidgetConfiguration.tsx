@@ -22,10 +22,15 @@ import {
   ListCard,
   Modal,
   ModalHeader,
+  ModalLeadingItem,
   ModalBody,
   ModalFooter,
 } from '@faclon-labs/design-sdk';
 import { useUNSTree, type UNSTree } from '../../iosense-sdk/useUNSTree';
+import { resolveAndCompute } from '../../iosense-sdk/api';
+import { createGroups, slotsToPoints } from '../HistogramWidget/histogram-utils';
+import { computeRange, defaultPeriodicity, timeMode } from '../HistogramWidget/histogram-time';
+import type { SeriesPayload } from '../../iosense-sdk/types';
 import type {
   Bin,
   BindingEntry,
@@ -95,7 +100,7 @@ function withDefaultDurations(saved: TimeTabUIConfig | undefined): TimeTabUIConf
 const DEFAULT_STYLING: HistogramStyling = {
   size: { preset: 'Medium', customWidth: 880, customHeight: 400, lockAspectRatio: false },
   card: { wrapInCard: true, backgroundColor: '#FFFFFF', borderColor: '#EEEEEE', borderWidth: 1, borderRadius: 8 },
-  hideElements: { settingsIcon: false, exportIcon: false, chartTitle: false },
+  hideElements: { settingsIcon: false, exportIcon: false, infoIcon: false, fixedTimeText: false, chartTitle: false },
   advancedEnabled: false,
   chartTitle: { fontSize: 18, fontColor: '#050505', fontWeight: 'Semi-Bold' },
   xAxisLabel: { textColor: '#050505', lineColor: '#DEE1E3', dataPointColor: '#050505' },
@@ -338,6 +343,7 @@ function IconAction({
   onClick,
   small,
   destructive,
+  disabled,
 }: {
   icon: ReactNode;
   label: string;
@@ -346,15 +352,18 @@ function IconAction({
   small?: boolean;
   // `destructive` renders the icon in the error color (e.g. Delete).
   destructive?: boolean;
+  // `disabled` shows the action greyed out and non-interactive (kept visible).
+  disabled?: boolean;
 }) {
   return (
     <span
       role="button"
-      tabIndex={0}
+      tabIndex={disabled ? -1 : 0}
       aria-label={label}
-      className={`hcfg-icon-action${small ? ' hcfg-icon-action--sm' : ''}${destructive ? ' hcfg-icon-action--destructive' : ''}`}
-      onClick={(e) => { e.stopPropagation(); onClick(e); }}
-      onKeyDown={(e) => {
+      aria-disabled={disabled || undefined}
+      className={`hcfg-icon-action${small ? ' hcfg-icon-action--sm' : ''}${destructive ? ' hcfg-icon-action--destructive' : ''}${disabled ? ' hcfg-icon-action--disabled' : ''}`}
+      onClick={disabled ? undefined : (e) => { e.stopPropagation(); onClick(e); }}
+      onKeyDown={disabled ? undefined : (e) => {
         if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); onClick(e); }
       }}
     >
@@ -367,52 +376,69 @@ function IconAction({
 // ─── Bin ranges — inline From/To rows (Figma "Bin Range" accordion) ──────────
 
 function BinRows({ bins, onChange }: { bins: Bin[]; onChange: (bins: Bin[]) => void }) {
-  // Bins are a contiguous auto-generated chain: every From = the previous bin's
-  // To (disabled). Only the To of NON-last bins is editable; editing it shifts
-  // every following bin by the same delta so the chain stays contiguous. The
-  // LAST bin's From AND To are both disabled (auto).
-  const updateEnd = (i: number, value: number) => {
-    const delta = value - bins[i].end;
-    onChange(
-      bins.map((b, j) => {
-        if (j < i) return b;
-        if (j === i) return { ...b, end: value };
-        return { ...b, start: b.start + delta, end: b.end + delta };
-      }),
-    );
+  // Bins mirror the Gauge widget's segment ranges (design-team request): each
+  // bin's `From` is DERIVED from the previous bin's `To` and shown read-only, so
+  // the chain stays contiguous — but editing a `To` NEVER shifts the other bins.
+  // Only that bin's own `To` and the next bin's derived `From` change (no cascade
+  // of every following value, which was the complaint). The FIRST bin's `From` is
+  // the histogram's lower bound (editable); the LAST bin's `To` is the upper bound
+  // (editable). Invalid entries (To < From) surface as an inline error, not an
+  // auto-fix — same as the gauge's `chainSegments` / `validateSegmentTo`.
+  const chain = (list: Bin[]): Bin[] => {
+    if (list.length === 0) return list;
+    let prevEnd = list[0].start;
+    return list.map((b, i) => {
+      if (i === 0) {
+        prevEnd = b.end;
+        return b; // keep the first bin's From (editable lower bound)
+      }
+      const next = { ...b, start: prevEnd };
+      prevEnd = b.end;
+      return next;
+    });
   };
-  const remove = (i: number) => {
-    // Re-chain From = previous To after removal so bins stay contiguous.
-    const kept = bins.filter((_, idx) => idx !== i);
-    let start = kept[0]?.start ?? 0;
-    onChange(
-      kept.map((b, idx) => {
-        if (idx === 0) {
-          start = b.end;
-          return b;
-        }
-        const width = Math.max(1, b.end - b.start);
-        const next = { ...b, start, end: start + width };
-        start = next.end;
-        return next;
-      }),
-    );
-  };
+  const updateEnd = (i: number, value: number) =>
+    onChange(chain(bins.map((b, j) => (j === i ? { ...b, end: value } : b))));
+  const updateStart = (value: number) =>
+    onChange(chain(bins.map((b, j) => (j === 0 ? { ...b, start: value } : b))));
+  const remove = (i: number) => onChange(chain(bins.filter((_, idx) => idx !== i)));
   const add = () => {
     const last = bins[bins.length - 1];
     const start = last ? last.end : 0; // contiguous: new From = previous To
     const width = last ? Math.max(1, last.end - last.start) : 1000;
-    onChange([...bins, { start, end: start + width }]);
+    onChange(chain([...bins, { start, end: start + width }]));
   };
   return (
     <div className="hcfg-bin-rows">
       {bins.map((bin, i) => {
-        const isLast = i === bins.length - 1;
+        const isFirst = i === 0;
+        const toError = bin.end < bin.start ? 'To must be ≥ From' : null;
         return (
           <div key={i} className="hcfg-bin-row">
-            <TextInput label="From" type="number" isDisabled value={String(bin.start)} onChange={() => {}} />
-            <TextInput label="To" type="number" isDisabled={isLast} value={String(bin.end)} onChange={({ value }: { value: string }) => updateEnd(i, num(value))} />
-            <IconAction destructive icon={<Trash2 size={16} />} label={`Remove bin ${i + 1}`} onClick={() => remove(i)} />
+            <TextInput
+              label="From"
+              type="number"
+              isDisabled={!isFirst}
+              value={String(bin.start)}
+              onChange={isFirst ? ({ value }: { value: string }) => updateStart(num(value)) : () => {}}
+            />
+            <TextInput
+              label="To"
+              type="number"
+              value={String(bin.end)}
+              validationState={toError ? 'error' : undefined}
+              helpText={toError ?? undefined}
+              onChange={({ value }: { value: string }) => updateEnd(i, num(value))}
+            />
+            {/* A histogram needs at least two bins — the two defaults keep their
+                Remove button visible but DISABLED (only enabled once there are >2). */}
+            <IconAction
+              destructive
+              disabled={bins.length <= 2}
+              icon={<Trash2 size={16} />}
+              label={`Remove bin ${i + 1}`}
+              onClick={() => remove(i)}
+            />
           </div>
         );
       })}
@@ -795,9 +821,12 @@ function StyleSelect<T extends string>({
 function StylingSection({
   value,
   onChange,
+  isFixedTime,
 }: {
   value: HistogramStyling;
   onChange: (next: HistogramStyling) => void;
+  /** Fixed picker selected in the Time tab → offer the "Fixed Time Text" toggle. */
+  isFixedTime: boolean;
 }) {
   function update<K extends keyof HistogramStyling>(key: K, patch: Partial<HistogramStyling[K]>) {
     const prev = value[key];
@@ -813,7 +842,7 @@ function StylingSection({
     <div className="hcfg-style-tab">
       {/* Wrap Into Card + card appearance */}
       <div className="hcfg-switch-row">
-        <span className="LabelMediumSemibold">Wrap Into Card</span>
+        <span className="BodySmallSemibold" style={{ color: 'var(--text-gray-primary)' }}>Wrap Into Card</span>
         <Switch
           isChecked={value.card.wrapInCard === true}
           onChange={({ isChecked }: { isChecked: boolean }) => update('card', { wrapInCard: isChecked })}
@@ -828,7 +857,7 @@ function StylingSection({
       <Divider />
 
       {/* Hide Widget Element — checkboxes */}
-      <p className="hcfg-style-block__title LabelMediumSemibold">Hide Widget Element</p>
+      <p className="hcfg-style-block__title BodySmallSemibold" style={{ color: 'var(--text-gray-primary)' }}>Hide Widget Element</p>
       <div className="hcfg-checkbox-col">
         <Checkbox
           label="Setting Icon"
@@ -841,6 +870,20 @@ function StylingSection({
           onChange={(e: ChangeEvent<HTMLInputElement>) => update('hideElements', { exportIcon: e.target.checked })}
         />
         <Checkbox
+          label="Info Icon"
+          isChecked={value.hideElements.infoIcon}
+          onChange={(e: ChangeEvent<HTMLInputElement>) => update('hideElements', { infoIcon: e.target.checked })}
+        />
+        {/* Only relevant when the Time tab uses a Fixed picker (the caption below
+            the title). */}
+        {isFixedTime && (
+          <Checkbox
+            label="Fixed Time Text"
+            isChecked={value.hideElements.fixedTimeText}
+            onChange={(e: ChangeEvent<HTMLInputElement>) => update('hideElements', { fixedTimeText: e.target.checked })}
+          />
+        )}
+        <Checkbox
           label="Chart Title"
           isChecked={value.hideElements.chartTitle}
           onChange={(e: ChangeEvent<HTMLInputElement>) => update('hideElements', { chartTitle: e.target.checked })}
@@ -851,7 +894,7 @@ function StylingSection({
 
       {/* Advanced Settings — reveals font / axis / grid styling */}
       <div className="hcfg-switch-row">
-        <span className="LabelMediumSemibold">Advanced Settings</span>
+        <span className="BodySmallSemibold" style={{ color: 'var(--text-gray-primary)' }}>Advanced Settings</span>
         <Switch
           isChecked={value.advancedEnabled}
           onChange={({ isChecked }: { isChecked: boolean }) => onChange({ ...value, advancedEnabled: isChecked })}
@@ -937,6 +980,8 @@ export function HistogramWidgetConfiguration({
     withDefaultDurations(config?.timeTabConfig ?? (config?.timeConfig as TimeTabUIConfig | undefined)),
   );
   const idRef = useState(() => config?._id ?? `histogram_${Date.now()}`)[0];
+  // Delete-confirmation dialog (charts + data sources). Non-null → the modal shows.
+  const [confirmDelete, setConfirmDelete] = useState<{ title: string; message: string; onConfirm: () => void } | null>(null);
   // Chart Settings block state — 'view' (read-only) / 'add' / 'edit'; the drafts
   // hold the Title + Description while adding or editing.
   const [chartSelOpen, setChartSelOpen] = useState(false);
@@ -972,7 +1017,7 @@ export function HistogramWidgetConfiguration({
   const computeModalAnchor = (e?: React.MouseEvent | React.KeyboardEvent) => {
     const panelEl = (rootRef.current?.closest('.hcfg') as HTMLElement | null) ?? rootRef.current;
     const pr = panelEl?.getBoundingClientRect();
-    const MODAL_W = 320;
+    const MODAL_W = 280;
     // Reserve enough height for the TALLEST state a popup can reach — the plot/dist
     // line editors grow when their Style accordion is expanded. The SDK Modal
     // clamps its own top ONCE (on open, using the collapsed height) and never
@@ -1095,6 +1140,55 @@ export function HistogramWidgetConfiguration({
     emit(next, timeTabConfig);
   };
 
+  // ── Auto-seed bins from the data source ────────────────────────────────────
+  // The configurator has no live data prop, so when the first data source is
+  // added we fetch a sample over the current window and compute TWO default bins
+  // from its value range (the same split the widget does) and PERSIST them — so
+  // they show up as editable rows in the Bin Range accordion instead of the
+  // accordion looking empty. A ref holds the latest state so the async patch
+  // (after the fetch resolves) doesn't clobber the just-added source.
+  const stateRef = useRef({ uiTop, timeTabConfig, activeId: activeChart?._id });
+  stateRef.current = { uiTop, timeTabConfig, activeId: activeChart?._id };
+  const seedBinsFromSource = async (src: HistogramDataSource) => {
+    const match = VARIABLE_REGEX.exec((src.unsPath || '').trim());
+    if (!match) return; // not a bound topic → nothing to compute
+    const tc = timeTabConfig ?? FALLBACK_TIME_CONFIG;
+    const { startTime, endTime } = computeRange(tc);
+    const resolution = ({ minute: 'minute', hourly: 'hour', daily: 'day', weekly: 'week', monthly: 'month' } as Record<string, string>)[
+      defaultPeriodicity(tc).toLowerCase()
+    ];
+    try {
+      const items = await resolveAndCompute(
+        authentication ?? '',
+        [{ key: 'seed', topic: match[1], type: 'series' }],
+        startTime,
+        endTime,
+        resolution,
+      );
+      const payload = items[0]?.value;
+      const points = payload && typeof payload === 'object' ? slotsToPoints(payload as SeriesPayload) : [];
+      if (points.length === 0) return;
+      let min = Infinity;
+      let max = -Infinity;
+      for (const p of points) {
+        if (p.value < min) min = p.value;
+        if (p.value > max) max = p.value;
+      }
+      if (!Number.isFinite(min) || !Number.isFinite(max)) return;
+      if (max <= min) max = min + Math.max(1, Math.abs(min) * 0.1);
+      const bins: Bin[] = createGroups(min, max, 2).map(([start, end]) => ({ start, end }));
+      // Ref-based patch — reads the LATEST state (the source is already added).
+      const { uiTop: cur, timeTabConfig: curTc, activeId } = stateRef.current;
+      const id = activeId ?? cur.charts[0]?._id;
+      const nextCharts = cur.charts.map((c) => (c._id === id ? { ...c, bins } : c));
+      const next: HistogramUIConfig = { ...cur, charts: nextCharts };
+      setUiTop(next);
+      emit(next, curTc);
+    } catch {
+      /* fetch failed → leave bins empty; the widget's own auto-bins still render */
+    }
+  };
+
   // Chart Settings block (Figma "CHART SETTINGS STATE"): Title + Description are
   // read-only in 'view'; clicking Add(+)/Edit(✎) drafts a new/existing chart, then
   // Save/Add Chart commits. When >1 chart, the Title field becomes a chart dropdown.
@@ -1186,9 +1280,38 @@ export function HistogramWidgetConfiguration({
   };
   const deleteDistLine = (id: string) => patchUi({ distributionLines: distributionLines.filter((d) => d._id !== id) });
 
+  // When the Time tab links the widget to a dashboard Global Time Picker, the SDK
+  // only emits the picker id (global.globalTimepickerId). Snapshot the selected
+  // GTP's inherited durations / defaultDuration / timezone onto the config so the
+  // widget + mini-engine (which never see the host's GTP registry) can resolve the
+  // fetch window from the linked GTP — matching the line/column chart. The live
+  // platform re-derives the window from the linked GTP and ignores this snapshot,
+  // so it's harmless there and only helps local resolution.
+  function adoptGtpSnapshot(sdk: TimeTabUIConfig): TimeTabUIConfig {
+    const mode = (sdk as { linkTimeWith?: string; timeType?: string }).linkTimeWith ?? (sdk as { timeType?: string }).timeType ?? 'local';
+    if (mode !== 'global') return sdk;
+    const g = (sdk as { global?: { globalTimepickerId?: string; futureDaysAllowed?: string } }).global;
+    const id = g?.globalTimepickerId ?? (sdk as { globalTimepickerId?: string }).globalTimepickerId;
+    const gtp = id && globalTimepickers ? globalTimepickers.find((x) => x.id === id) : undefined;
+    if (!gtp) return sdk;
+    return {
+      ...sdk,
+      timezone: gtp.timezone ?? sdk.timezone,
+      cycleTime: (gtp.cycleTime as TimeTabUIConfig['cycleTime']) ?? sdk.cycleTime,
+      global: {
+        ...(g ?? {}),
+        globalTimepickerId: gtp.id,
+        allDurations: gtp.allDurations,
+        defaultDurationId: gtp.defaultDurationId,
+        futureDaysAllowed: gtp.futureDaysAllowed ?? g?.futureDaysAllowed,
+      },
+    } as unknown as TimeTabUIConfig;
+  }
+
   function handleTimeConfigChange(next: TimeTabUIConfig) {
-    setTimeTabConfig(next);
-    emit(uiTop, next);
+    const adopted = adoptGtpSnapshot(next);
+    setTimeTabConfig(adopted);
+    emit(uiTop, adopted);
   }
 
   const totalBins = ui.bins.length;
@@ -1213,7 +1336,19 @@ export function HistogramWidgetConfiguration({
                 </>
               )}
               {chartUiMode === 'edit' && (
-                <IconAction small destructive icon={<Trash2 size={16} />} label="Delete chart" onClick={() => deleteChart(activeChartSafe._id)} />
+                <IconAction
+                  small
+                  destructive
+                  icon={<Trash2 size={16} />}
+                  label="Delete chart"
+                  onClick={() =>
+                    setConfirmDelete({
+                      title: 'Delete Chart',
+                      message: `Are you sure you want to delete this chart name “${activeChartSafe.chartTitle || 'Chart Name'}”?\nThis action is irreversible`,
+                      onConfirm: () => deleteChart(activeChartSafe._id),
+                    })
+                  }
+                />
               )}
             </div>
           </div>
@@ -1283,6 +1418,8 @@ export function HistogramWidgetConfiguration({
       <ProductAccordionItem
         title="Data Sources"
         isDisabled={!hasCharts}
+        // Chevron + expand only when the body has entries (a data source).
+        isActive={ui.dataSources.length > 0}
         trailingIcon={
           ui.dataSources.length > 0 ? (
             <span className="hcfg-ds-count BodyXSmallMedium">{ui.dataSources.length}</span>
@@ -1332,7 +1469,18 @@ export function HistogramWidgetConfiguration({
                 onClick={(e: React.MouseEvent) => openSrcPanel({ mode: 'edit', index: i }, e)}
                 trailingItems={
                   <div className="hcfg-ds-actions">
-                    <IconAction destructive icon={<Trash2 size={14} />} label="Delete data source" onClick={() => patchUi({ dataSources: ui.dataSources.filter((_, idx) => idx !== i) })} />
+                    <IconAction
+                      destructive
+                      icon={<Trash2 size={14} />}
+                      label="Delete data source"
+                      onClick={() =>
+                        setConfirmDelete({
+                          title: 'Delete Data Source',
+                          message: `Are you sure you want to delete this data source “${src.name || `Data Source ${i + 1}`}”?\nThis action is irreversible`,
+                          onConfirm: () => patchUi({ dataSources: ui.dataSources.filter((_, idx) => idx !== i) }),
+                        })
+                      }
+                    />
                   </div>
                 }
               />
@@ -1346,10 +1494,12 @@ export function HistogramWidgetConfiguration({
       <ProductAccordionItem
         title="Axis"
         isDisabled={!hasCharts}
+        // A default Y axis ALWAYS exists, so Axis is always active/expandable once
+        // a chart exists — chevron shown (unlike the empty-list accordions).
+        isActive
         trailingIcon={<span className="hcfg-ds-count BodyXSmallMedium">{1 + axes.length}</span>}
-        // Axes are configured against a data source — only expandable once one exists.
-        isExpanded={ui.dataSources.length > 0 && axisExpanded}
-        onToggle={() => { if (ui.dataSources.length > 0) setAxisExpanded((v) => !v); }}
+        isExpanded={hasCharts && axisExpanded}
+        onToggle={() => { if (hasCharts) setAxisExpanded((v) => !v); }}
         headerAction={
           hasCharts && ui.dataSources.length > 0 ? (
             <IconAction
@@ -1361,7 +1511,7 @@ export function HistogramWidgetConfiguration({
           ) : undefined
         }
       >
-        {ui.dataSources.length > 0 && axisExpanded && (
+        {hasCharts && axisExpanded && (
           <div className="hcfg-accordion-body">
             <p className="hcfg-axis-hint BodyXSmallRegular">
               <Info size={13} /> A default Y axis is added for you. Add an axis to plot a data source on the Left or Right.
@@ -1392,6 +1542,9 @@ export function HistogramWidgetConfiguration({
       <ProductAccordionItem
         title="Bin Range"
         isDisabled={!hasCharts}
+        // A data source implies default bins (the widget seeds two from the data),
+        // so Bin Range is active/expandable once a source exists — like Axis.
+        isActive={ui.dataSources.length > 0}
         trailingIcon={
           totalBins > 0 ? <span className="hcfg-ds-count BodyXSmallMedium">{totalBins}</span> : undefined
         }
@@ -1411,6 +1564,8 @@ export function HistogramWidgetConfiguration({
       <ProductAccordionItem
         title="Plot Line"
         isDisabled={!hasCharts}
+        // Chevron + expand only when at least one plot line exists.
+        isActive={plotLines.length > 0}
         trailingIcon={plotLines.length > 0 ? <span className="hcfg-ds-count BodyXSmallMedium">{plotLines.length}</span> : undefined}
         // Only expandable once a plot line exists; the Add (+) adds the first one.
         isExpanded={plotLines.length > 0 && plotExpanded}
@@ -1445,6 +1600,8 @@ export function HistogramWidgetConfiguration({
       <ProductAccordionItem
         title="Distribution Line"
         isDisabled={!hasCharts}
+        // Chevron + expand only when at least one distribution line exists.
+        isActive={distributionLines.length > 0}
         trailingIcon={distributionLines.length > 0 ? <span className="hcfg-ds-count BodyXSmallMedium">{distributionLines.length}</span> : undefined}
         // Only expandable once a distribution line exists; the Add (+) adds the first.
         isExpanded={distributionLines.length > 0 && distExpanded}
@@ -1483,7 +1640,7 @@ export function HistogramWidgetConfiguration({
     <div className="hcfg" ref={rootRef}>
       <div className="hcfg-header">
         <IconButton icon={<ArrowLeft size={20} />} size="Large" accessibilityLabel="Back" onClick={() => onBack?.()} />
-        <span className="hcfg-header__title LabelMediumSemibold">Histogram</span>
+        <span className="hcfg-header__title BodyLargeSemibold" style={{ color: 'var(--text-gray-primary)' }}>Histogram chart</span>
       </div>
       <div className="hcfg-tabs">
         <Tabs variant="Bordered" size="Medium" value={topTab} onChange={(v: string) => setTopTab(v as TopTab)} isFullWidthTabItem>
@@ -1504,7 +1661,7 @@ export function HistogramWidgetConfiguration({
           </div>
         )}
         {topTab === 'Style' && (
-          <StylingSection value={ui.style} onChange={(style) => patchUi({ style })} />
+          <StylingSection value={ui.style} onChange={(style) => patchUi({ style })} isFixedTime={timeMode(timeTabConfig) === 'fixed'} />
         )}
       </div>
 
@@ -1542,9 +1699,17 @@ export function HistogramWidgetConfiguration({
               resolveUNSValue={resolveUNSValue}
               onSubmit={(s) => {
                 if (srcPanel.mode === 'edit') {
+                  // Recompute the bins from the NEW data whenever the bound topic
+                  // changes — otherwise the Bin Range accordion (and the chart)
+                  // keeps the previous source's ranges. Name/color-only edits skip it.
+                  const prev = ui.dataSources[srcPanel.index];
+                  const topicChanged = (prev?.unsPath || '').trim() !== (s.unsPath || '').trim();
                   patchUi({ dataSources: ui.dataSources.map((d, idx) => (idx === srcPanel.index ? s : d)) });
+                  if (topicChanged) void seedBinsFromSource(s);
                 } else {
+                  const seedBins = ui.bins.length === 0; // first source + no bins yet
                   patchUi({ dataSources: [...ui.dataSources, s] });
+                  if (seedBins) void seedBinsFromSource(s);
                 }
                 closeSrcPanel();
               }}
@@ -1701,6 +1866,47 @@ export function HistogramWidgetConfiguration({
               onSubmit={submitDistLine}
               onReady={setDistEditorBinding}
             />
+          </ModalBody>
+        </Modal>
+      )}
+
+      {/* Delete confirmation — centered dialog for destructive chart / data-source
+          actions (there's no SDK confirm dialog, so compose one from Modal): red
+          trash leading icon + title, message, then right-aligned Cancel/Delete. */}
+      {confirmDelete && (
+        <Modal
+          isOpen
+          onClose={() => setConfirmDelete(null)}
+          className="hcfg-confirm-modal"
+          header={
+            <ModalHeader
+              title={confirmDelete.title}
+              onClose={() => setConfirmDelete(null)}
+              leadingItem={<ModalLeadingItem leading="Icon" icon={<Trash2 size={18} />} />}
+            />
+          }
+          footer={
+            <ModalFooter
+              primaryAction={
+                <Button
+                  variant="Primary"
+                  color="Negative"
+                  size="Medium"
+                  label="Delete"
+                  onClick={() => {
+                    confirmDelete.onConfirm();
+                    setConfirmDelete(null);
+                  }}
+                />
+              }
+              secondaryAction={
+                <Button variant="Gray" size="Medium" label="Cancel" onClick={() => setConfirmDelete(null)} />
+              }
+            />
+          }
+        >
+          <ModalBody>
+            <p className="hcfg-confirm-message BodyMediumRegular">{confirmDelete.message}</p>
           </ModalBody>
         </Modal>
       )}

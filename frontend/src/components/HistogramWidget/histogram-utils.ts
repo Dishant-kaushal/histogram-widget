@@ -64,8 +64,24 @@ export function hasBinName(binName: string | undefined): boolean {
   return !!binName && binName !== '-';
 }
 
+/** Compact number for axis labels — abbreviates large values (K/M/B) with at
+ *  most one decimal and trims trailing zeros, so bin-range labels like
+ *  "294039.51 - 1000000" become "294K - 1M" and stop overlapping on the x-axis. */
+export function compactNum(n: number): string {
+  if (!Number.isFinite(n)) return String(n);
+  const abs = Math.abs(n);
+  const suffix = (v: number, s: string): string => {
+    const r = Math.round(v * 10) / 10; // one decimal
+    return (Number.isInteger(r) ? String(r) : r.toFixed(1)) + s;
+  };
+  if (abs >= 1e9) return suffix(n / 1e9, 'B');
+  if (abs >= 1e6) return suffix(n / 1e6, 'M');
+  if (abs >= 1e3) return suffix(n / 1e3, 'K');
+  return String(Math.round(n * 100) / 100); // < 1000: ≤ 2 decimals, trimmed
+}
+
 export function binLabel(bin: Bin, index: number, showBinRanges: boolean): string {
-  if (showBinRanges) return `${bin.start} - ${bin.end}`;
+  if (showBinRanges) return `${compactNum(bin.start)} - ${compactNum(bin.end)}`;
   return String(index + 1); // 1-based bin index
 }
 
@@ -113,7 +129,8 @@ export interface DailyGrouping {
   perBin: number[][];
 }
 
-const WEEKDAY_FMT = new Intl.DateTimeFormat('en-US', { weekday: 'long' });
+// x-axis labels for the daily view are DATES (e.g. "04 Jul"), not weekday names.
+const DAY_FMT = new Intl.DateTimeFormat('en-US', { day: '2-digit', month: 'short' });
 
 function dayKey(ms: number): string {
   const d = new Date(ms);
@@ -130,7 +147,7 @@ export function dailyBinCounts(points: SeriesPoint[], bins: Bin[], includeStartE
     else byDay.set(key, [p]);
   }
   const dayKeys = Array.from(byDay.keys()).sort();
-  const categories = dayKeys.map((k) => WEEKDAY_FMT.format(new Date(`${k}T00:00:00`)));
+  const categories = dayKeys.map((k) => DAY_FMT.format(new Date(`${k}T00:00:00`)));
   const perBin = bins.map(() => new Array<number>(dayKeys.length).fill(0));
   dayKeys.forEach((k, dayIdx) => {
     const counts = binCounts(byDay.get(k)!, bins, includeStartEnd);
